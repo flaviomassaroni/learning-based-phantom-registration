@@ -274,8 +274,13 @@ def main():
     parser.add_argument('--noise_sigma', type=float, default=0.3, help='Polaris tracker noise sigma in mm')
     parser.add_argument('--network_scale_mm', type=float, default=100.0, help='Common Network scale in mm')
     parser.add_argument('--resume', type=str, default=None, help='Path to checkpoint to resume training from')
-
+    parser.add_argument('--pretrained', type=str, default=None, help=('Carica solamente i pesi iniziali. '
+                                                                      'Optimizer e scheduler ripartono da zero.'),
+    )
     args = parser.parse_args()
+    if args.resume is not None and args.pretrained is not None:
+        parser.error(
+            '--resume e --pretrained non possono essere usati insieme.')
     args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     np.random.seed(args.manualSeed)
@@ -320,6 +325,7 @@ def main():
         noise_sigma=args.noise_sigma,
         seed=args.manualSeed + 1,
         network_scale_mm=args.network_scale_mm,
+        patch_radius_mm=args.patch_radius_mm,
     )
     eval_loader = DataLoader(
         eval_dataset,
@@ -344,6 +350,28 @@ def main():
         dgcnn_k=args.dgcnn_k,
     )
     net = DCP(model_args).to(args.device)
+
+    if args.pretrained is not None:
+        if not os.path.isfile(args.pretrained):
+            raise FileNotFoundError(
+                f"Checkpoint pretrained non trovato: {args.pretrained}"
+            )
+
+        pretrained_checkpoint = torch.load(
+            args.pretrained,
+            map_location=args.device,
+            weights_only=False,
+        )
+
+        net.load_state_dict(
+            pretrained_checkpoint['state_dict'],
+            strict=True,
+        )
+
+        textio.cprint(
+            f"Pesi iniziali caricati da: {args.pretrained}"
+        )
+
 
     textio.cprint(str(net))
     total_params = sum(p.numel() for p in net.parameters() if p.requires_grad)

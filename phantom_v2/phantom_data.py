@@ -194,7 +194,11 @@ def _sample_patch(
     centers = mesh.triangles_center
     radius_squared = patch_radius_mm ** 2
     max_seed_attempts = 100
+    min_patch_faces = min(
+        64,
+        max(8, n_points // 4),)
 
+    
     # Alcune facce della mesh possono essere isolate oppure
     # non avere vicini sufficientemente vicini al seme.
     # In quel caso scegliamo automaticamente un altro seme.
@@ -230,12 +234,13 @@ def _sample_patch(
                 if np.dot(delta, delta) <= radius_squared:
                     queue.append(neighbor)
 
-        if len(patch_faces) >= 2:
+        if len(patch_faces) >= min_patch_faces:
             break
 
     else:
         raise MeshLoadError(
-            "Impossibile costruire una patch connessa dopo "
+            "Impossibile costruire una patch con almeno "
+            f"{min_patch_faces} facce dopo "
             f"{max_seed_attempts} tentativi."
         )
 
