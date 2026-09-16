@@ -5,3 +5,5 @@ checkpoints/
 *.t7
 data/
 .env
+phantom_v2/phantom.stl
+phantom_v2/phantom.stl
