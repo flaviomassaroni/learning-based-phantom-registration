@@ -594,6 +594,15 @@ def main():
     # ========= Data =========
     textio = IOStream(os.path.join('checkpoints', args.exp_name, 'train.log'))
     textio.cprint(f"Args: {args}")
+    mesh_sha256 = hashlib.sha256(
+        Path(args.stl).read_bytes()
+    ).hexdigest()
+
+    textio.cprint(
+        "Obiettivo: pose + cycle + corr_weight * KL geometrica. "
+        "model.best selezionato sulla val_loss "
+        "(pose + cycle, senza KL)."
+    )
 
     train_dataset = PhantomDataset(
         stl_path=args.stl,
@@ -687,6 +696,49 @@ def main():
     start_epoch = 0
     if args.resume and os.path.exists(args.resume):
         ckpt = torch.load(args.resume, map_location=args.device, weights_only=False)
+        saved = ckpt["model_args"]
+        saved = (
+            saved
+            if isinstance(saved, dict)
+            else vars(saved)
+        )
+
+        if (
+            args.corr_weight != saved.get("corr_weight", 0.0)
+            or args.corr_sigma_mm
+            != saved.get("corr_sigma_mm", 5.0)
+        ):
+            raise ValueError(
+                "Per cambiare corr_weight/corr_sigma_mm "
+                "usa --pretrained con un nuovo esperimento, "
+                "non --resume."
+            )
+
+        if ckpt.get("mesh_sha256", mesh_sha256) != mesh_sha256:
+            raise ValueError(
+                "La mesh di --resume non coincide "
+                "con quella del checkpoint."
+            )
+
+        if "reference_phantom_mm" in ckpt:
+            reference = (
+                ckpt["reference_phantom_mm"]
+                .detach()
+                .cpu()
+                .numpy()
+            )
+
+            if (
+                reference.shape != (args.target_n_points, 3)
+                or not np.isfinite(reference).all()
+            ):
+                raise ValueError(
+                    "Digital twin del checkpoint incompatibile "
+                    "con --target_n_points."
+                )
+
+            train_dataset.reference_phantom = reference.copy()
+            eval_dataset.reference_phantom = reference.copy()
         net.load_state_dict(ckpt['state_dict'])
         optimizer.load_state_dict(ckpt['optimizer_state_dict'])
         scheduler.load_state_dict(ckpt['scheduler_state_dict'])
@@ -733,6 +785,14 @@ def main():
             'val_loss': val_metrics['val_loss'],
             'best_val_loss': best_eval_loss,
             'epoch': epoch,
+            'data_protocol': 'partial_to_global_fixed_fps_v1',
+            'selection_metric': 'val_loss_pose_cycle',
+            'corr_weight': args.corr_weight,
+            'corr_sigma_mm': args.corr_sigma_mm,
+            'reference_phantom_mm': torch.from_numpy(
+                train_dataset.reference_phantom.copy()
+            ),
+            'mesh_sha256': mesh_sha256,
         }
 
         model_dir = os.path.join(

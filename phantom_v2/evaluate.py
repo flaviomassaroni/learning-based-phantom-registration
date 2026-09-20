@@ -7,7 +7,8 @@ Usage:
   python evaluate.py --model_path checkpoints/exp/models/model.best.t7 --stl phantom.stl --mode sweep
   python evaluate.py --mode sparse --num_eval 2000
 """
-
+import hashlib
+from pathlib import Path
 import argparse
 import os
 import sys
@@ -461,6 +462,45 @@ def evaluate(args):
         ),
     )
 
+    if "reference_phantom_mm" in checkpoint:
+        digest = hashlib.sha256(
+            Path(stl_path).read_bytes()
+        ).hexdigest()
+
+        if checkpoint.get("mesh_sha256", digest) != digest:
+            raise ValueError(
+                "Mesh diversa da quella del checkpoint: "
+                "controllare --stl."
+            )
+
+        reference = (
+            checkpoint["reference_phantom_mm"]
+            .detach()
+            .cpu()
+            .numpy()
+        )
+
+        if (
+            reference.ndim != 2
+            or reference.shape[1] != 3
+            or not np.isfinite(reference).all()
+        ):
+            raise ValueError(
+                "Digital twin salvato non valido."
+            )
+
+        if len(reference) == dataset.target_n_points:
+            dataset.reference_phantom = reference.copy()
+            print(
+                "Digital twin globale ripristinato "
+                "dal checkpoint."
+            )
+        else:
+            print(
+                "ATTENZIONE: numero target diverso dal training; "
+                "digital twin ricampionato."
+            )
+
     loader = DataLoader(
         dataset,
         batch_size=args.batch_size,
@@ -637,6 +677,16 @@ def evaluate(args):
 
     try:
         textio.cprint(f"\nCheckpoint: {args.model_path}")
+        textio.cprint(
+            "Protocollo salvato: "
+            f"{checkpoint.get('data_protocol', 'non specificato')}"
+        )
+
+        textio.cprint(
+            f"Training corr_weight: {config.get('corr_weight', 0.0)}, "
+            "corr_sigma_mm: "
+            f"{config.get('corr_sigma_mm', 'non specificato')}"
+        )
         textio.cprint(
             "Modalità rete: diagnostica BatchNorm con statistiche del batch"
             if args.bn_batch_stats

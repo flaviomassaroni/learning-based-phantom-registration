@@ -405,7 +405,7 @@ class PhantomDataset(Dataset):
         n_points=None,
         target_n_points=1024,
         rot_max=np.pi / 4,
-        trans_max=50.0,
+        trans_max=50.0, # max traslazione per asse, in mm
         noise_sigma=0.3,
         factor=None,
         seed=42,
@@ -425,6 +425,14 @@ class PhantomDataset(Dataset):
 
         if (
             not np.isfinite(self.network_scale_mm)
+            or self.network_scale_mm <= 0
+        ):
+            raise ValueError(
+                "network_scale_mm deve essere positivo e finito."
+            )
+
+        if (
+            not np.isfinite(self.patch_radius_mm)
             or self.patch_radius_mm <= 0
         ):
             raise ValueError(
@@ -434,6 +442,26 @@ class PhantomDataset(Dataset):
         if n_points is None:
             n_points = 512 if mode == 'sweep' else 25
 
+        if mode not in ("sweep", "sparse"):
+            raise ValueError(
+                "mode deve essere 'sweep' o 'sparse'."
+            )
+
+        if n_points < 1 or num_samples < 1:
+            raise ValueError(
+                "n_points e num_samples devono essere positivi."
+            )
+
+        for name, value in (
+            ("rot_max", rot_max),
+            ("trans_max", trans_max),
+            ("noise_sigma", noise_sigma),
+        ):
+            if not np.isfinite(value) or value < 0:
+                raise ValueError(
+                    f"{name} deve essere finito e non negativo."
+                )
+
         self.n_points = n_points
         self.target_n_points = int(target_n_points)
 
@@ -441,20 +469,6 @@ class PhantomDataset(Dataset):
             raise ValueError(
         "target_n_points deve essere almeno 1."
         )
-
-        # 4 landmark casuali per baseline SVD (fissati con seed)
-        landmark_rng = np.random.default_rng(seed)
-        vertices = np.asarray(self.mesh.vertices, dtype=np.float64)
-        num_mesh_verts = len(vertices)
-        self.landmark_indices = landmark_rng.choice(
-            num_mesh_verts, 4, replace=False
-        )
-        self.landmark_pts = vertices[self.landmark_indices].copy()
-        # Ground truth landmark transforms (identity per default)
-        self.landmark_R_gt = np.eye(3)
-        self.landmark_t_gt = np.zeros(3)
-
-        self.rng = np.random.default_rng(seed)
 
         # Probabilità calcolate una volta per dataset.
         areas = np.asarray(self.mesh.area_faces)
