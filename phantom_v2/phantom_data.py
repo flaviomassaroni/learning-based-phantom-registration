@@ -101,6 +101,64 @@ def _sample_triangles(mesh, face_ids, rng):
         + (root * uv[:, 1])[:, None] * triangles[:, 2]
     )
 
+def farthest_point_sample(points, n_points, rng):
+    """
+    Seleziona n_points distribuiti uniformemente tramite
+    Farthest Point Sampling su un insieme di candidati.
+    """
+    points = np.asarray(points, dtype=np.float64)
+
+    if points.ndim != 2 or points.shape[1] != 3:
+        raise ValueError(
+            "points deve avere forma [N, 3]."
+        )
+
+    if n_points < 1:
+        raise ValueError(
+            "n_points deve essere almeno 1."
+        )
+
+    if len(points) < n_points:
+        raise ValueError(
+            "Il numero di candidati deve essere maggiore "
+            "o uguale a n_points."
+        )
+
+    selected_indices = np.empty(
+        n_points,
+        dtype=np.int64,
+    )
+
+    min_distances = np.full(
+        len(points),
+        np.inf,
+        dtype=np.float64,
+    )
+
+    selected_indices[0] = int(
+        rng.integers(len(points))
+    )
+
+    for index in range(1, n_points):
+        last_point = points[selected_indices[index - 1]]
+
+        squared_distances = np.sum(
+            (points - last_point) ** 2,
+            axis=1,
+        )
+
+        np.minimum(
+            min_distances,
+            squared_distances,
+            out=min_distances,
+        )
+
+        selected_indices[index] = int(
+            np.argmax(min_distances)
+        )
+
+    return points[selected_indices].copy()
+
 
 def sample_mesh_surface(
     mesh,
@@ -345,6 +403,7 @@ class PhantomDataset(Dataset):
         mode='sweep',
         num_samples=1000,
         n_points=None,
+        target_n_points=1024,
         rot_max=np.pi / 4,
         trans_max=50.0,
         noise_sigma=0.3,
@@ -376,6 +435,12 @@ class PhantomDataset(Dataset):
             n_points = 512 if mode == 'sweep' else 25
 
         self.n_points = n_points
+        self.target_n_points = int(target_n_points)
+
+        if self.target_n_points < 1:
+            raise ValueError(
+        "target_n_points deve essere almeno 1."
+        )
 
         # 4 landmark casuali per baseline SVD (fissati con seed)
         landmark_rng = np.random.default_rng(seed)
@@ -399,6 +464,30 @@ class PhantomDataset(Dataset):
             raise MeshLoadError("Area totale non valida.")
 
         self.face_probabilities = areas / total_area
+        # Digital twin discretizzato una sola volta e condiviso
+        # tra training, validation e test.
+        reference_rng = np.random.default_rng(12345)
+
+        # Genera molti candidati uniformi sulla superficie.
+        candidate_count = max(
+            self.target_n_points * 8,
+            self.target_n_points,
+        )
+
+        reference_candidates = sample_mesh_surface(
+            self.mesh,
+            candidate_count,
+            strategy='random',
+            rng=reference_rng,
+            face_probabilities=self.face_probabilities,
+        )
+
+        # Seleziona un digital twin più uniforme e con meno buchi.
+        self.reference_phantom = farthest_point_sample(
+            reference_candidates,
+            self.target_n_points,
+            reference_rng,
+        )
 
         # Le adiacenze servono soltanto per lo sweep.
         self.face_neighbors = None
@@ -425,6 +514,10 @@ class PhantomDataset(Dataset):
             n = self.n_points  # ~512
             strategy = 'patch'
 
+        # Campioniamo 2N punti sulla stessa regione, poi li dividiamo
+        # in due insiemi indipendenti. Source e target descrivono la
+        # stessa superficie, ma non contengono le stesse coordinate.
+        # Source: acquisizione parziale della superficie.
         observed_phantom = sample_mesh_surface(
             self.mesh,
             n,
@@ -435,6 +528,9 @@ class PhantomDataset(Dataset):
             patch_radius_mm=self.patch_radius_mm,
         )
 
+        # Copia della stessa discretizzazione globale del digital twin.
+        reference_phantom = self.reference_phantom.copy()
+
         # 2. GT: Polaris → phantom
         R_gt, t_gt, _, _ = generate_transform(rand, self.rot_max, self.trans_max)
 
@@ -443,8 +539,14 @@ class PhantomDataset(Dataset):
         if self.noise_sigma > 0:
             src = src + rand.normal(0, self.noise_sigma, src.shape)
 
-        # 4. tgt = punti phantom puliti
-        tgt = observed_phantom
+        # 4. Riferimento digitale campionato indipendentemente
+        tgt = reference_phantom
+
+        src_permutation = rand.permutation(src.shape[0])
+        tgt_permutation = rand.permutation(tgt.shape[0])
+
+        src = src[src_permutation]
+        tgt = tgt[tgt_permutation]
 
         # Coordinate fisiche in mm -> coordinate della rete.
         scale = self.network_scale_mm
@@ -497,24 +599,23 @@ if __name__ == '__main__':
         + t.astype(np.float64)[:, None]
     ).T * scale
 
-    errors_mm = np.linalg.norm(
-        aligned_mm - target_mm,
-        axis=1,
+    from scipy.spatial import cKDTree
+
+    target_tree = cKDTree(target_mm)
+
+    errors_mm, _ = target_tree.query(
+        aligned_mm,
+        k=1,
     )
 
-    patch_extents = np.ptp(target_mm, axis=0)
+    patch_extents = np.ptp(aligned_mm, axis=0)
 
     print(f"Source shape: {src.shape}")
     print(f"Target shape: {tgt.shape}")
     print(f"Estensione patch XYZ [mm]: {patch_extents}")
-    print(f"Errore medio con GT [mm]: {errors_mm.mean():.8f}")
-    print(f"Errore massimo con GT [mm]: {errors_mm.max():.8f}")
+    print("Distanza NN media dopo GT [mm]: "f"{errors_mm.mean():.6f}")
+    print("Distanza NN massima dopo GT [mm]: "f"{errors_mm.max():.6f}")
 
-    if errors_mm.max() > 0.001:
-        raise RuntimeError(
-            "La GT non riallinea i punti entro 0.001 mm: "
-            "controllare trasformazioni e scala."
-        )
 
     # Campione della mesh per mostrare dove si trova la patch.
     context_mm = sample_mesh_surface(
@@ -538,11 +639,11 @@ if __name__ == '__main__':
     )
 
     ax1.scatter(
-        *target_mm.T,
+        *aligned_mm.T,
         s=8,
         c='red',
         alpha=1.0,
-        label='Patch sweep',
+        label='Sweep riallineato',
     )
 
     ax1.set_title("Posizione della patch nel phantom")
@@ -555,7 +656,7 @@ if __name__ == '__main__':
 
     ax2 = fig.add_subplot(122, projection='3d')
     ax2.scatter(
-        *target_mm.T,
+        *aligned_mm.T,
         s=6,
         c='red',
     )
@@ -566,7 +667,7 @@ if __name__ == '__main__':
 
     for ax in (ax1, ax2):
         ax.set_xlabel("X [mm]")
-        ax.set_ylabel("Y [mm [mm]")
+        ax.set_ylabel("Y [mm]")
         ax.set_zlabel("Z [mm]")
 
     plt.tight_layout()

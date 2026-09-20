@@ -65,16 +65,19 @@ def _init_(args):
 
 def train_one_epoch(args, net, train_loader, optimizer, textio, epoch):
     net.train()
-    total_loss = 0
-    total_cycle_loss = 0
-    total_mse_ab = 0
-    total_mae_ab = 0
-    total_mse_ba = 0
-    total_mae_ba = 0
+
+    total_loss = 0.0
+    total_cycle_loss = 0.0
+    total_mse_ab = 0.0
+    total_mae_ab = 0.0
+    total_mse_ba = 0.0
+    total_mae_ba = 0.0
+    total_rotation_loss = 0.0
+    total_translation_loss = 0.0
+    total_grad_norm = 0.0
     total_examples = 0
-    total_rotation_loss = 0
-    total_translation_loss = 0
-    grad_norm = 0.0
+
+    from util import transform_point_cloud
 
     for src, target, rotation_ab, translation_ab in tqdm(train_loader):
         src = src.to(args.device)
@@ -85,21 +88,45 @@ def train_one_epoch(args, net, train_loader, optimizer, textio, epoch):
         batch_size = src.size(0)
         total_examples += batch_size
 
-        optimizer.zero_grad()
-        rotation_ab_pred, translation_ab_pred, rotation_ba_pred, translation_ba_pred = net(src, target)
+        optimizer.zero_grad(set_to_none=True)
 
-        identity = torch.eye(3, device=args.device).unsqueeze(0).repeat(batch_size, 1, 1)
+        (
+            rotation_ab_pred,
+            translation_ab_pred,
+            rotation_ba_pred,
+            translation_ba_pred,
+        ) = net(src, target)
 
-        from util import transform_point_cloud
-        transformed_src = transform_point_cloud(src, rotation_ab_pred, translation_ab_pred)
-        transformed_target = transform_point_cloud(target, rotation_ba_pred, translation_ba_pred)
+        identity = torch.eye(
+            3,
+            device=args.device,
+        ).unsqueeze(0).expand(batch_size, -1, -1)
 
-        rotation_loss = F.mse_loss(torch.matmul(rotation_ab_pred.transpose(2, 1), rotation_ab), identity)
-        translation_loss = F.mse_loss(translation_ab_pred, translation_ab)
+        rotation_loss = F.mse_loss(
+            torch.matmul(
+                rotation_ab_pred.transpose(2, 1),
+                rotation_ab,
+            ),
+            identity,
+        )
+
+        translation_loss = F.mse_loss(
+            translation_ab_pred,
+            translation_ab,
+        )
+
         loss = rotation_loss + translation_loss
+        weighted_cycle_loss = 0.0
 
         if args.cycle:
-            rotation_loss_cycle = F.mse_loss(torch.matmul(rotation_ba_pred, rotation_ab_pred), identity)
+            rotation_loss_cycle = F.mse_loss(
+                torch.matmul(
+                    rotation_ba_pred,
+                    rotation_ab_pred,
+                ),
+                identity,
+            )
+
             cycle_translation = (
                 torch.matmul(
                     rotation_ba_pred,
@@ -111,20 +138,15 @@ def train_one_epoch(args, net, train_loader, optimizer, textio, epoch):
             translation_loss_cycle = torch.mean(
                 cycle_translation ** 2
             )
-            cycle_loss = rotation_loss_cycle + translation_loss_cycle
-            loss = loss + cycle_loss * 0.1
-            total_cycle_loss += cycle_loss.item() * 0.1 * batch_size
-        else:
-            total_cycle_loss += 0
 
-        total_rotation_loss += rotation_loss.item() * batch_size
-        total_translation_loss += translation_loss.item() * batch_size
-        total_loss += loss.item() * batch_size
+            cycle_loss = (
+                rotation_loss_cycle
+                + translation_loss_cycle
+            )
 
-        total_mse_ab += torch.mean((transformed_src - target) ** 2, dim=[0, 1, 2]).item() * batch_size
-        total_mae_ab += torch.mean(torch.abs(transformed_src - target), dim=[0, 1, 2]).item() * batch_size
-        total_mse_ba += torch.mean((transformed_target - src) ** 2, dim=[0, 1, 2]).item() * batch_size
-        total_mae_ba += torch.mean(torch.abs(transformed_target - src), dim=[0, 1, 2]).item() * batch_size
+            loss = loss + 0.1 * cycle_loss
+            weighted_cycle_loss = 0.1 * cycle_loss.item()
+
         if not torch.isfinite(loss).item():
             raise RuntimeError(
                 "Loss non finita durante il training."
@@ -149,33 +171,105 @@ def train_one_epoch(args, net, train_loader, optimizer, textio, epoch):
                 "controllare dati e stabilità della SVD."
             )
 
-        grad_norm = float(grad_norm_tensor.item())
-
         optimizer.step()
 
-    train_metrics = {
+        # GT inversa: phantom -> Polaris
+        rotation_ba_gt = rotation_ab.transpose(
+            2, 1
+        ).contiguous()
+
+        translation_ba_gt = -torch.matmul(
+            rotation_ba_gt,
+            translation_ab.unsqueeze(2),
+        ).squeeze(2)
+
+        # Metriche indipendenti dall'ordine dei punti.
+        with torch.no_grad():
+            transformed_src_pred = transform_point_cloud(
+                src,
+                rotation_ab_pred,
+                translation_ab_pred,
+            )
+            transformed_src_gt = transform_point_cloud(
+                src,
+                rotation_ab,
+                translation_ab,
+            )
+
+            transformed_target_pred = transform_point_cloud(
+                target,
+                rotation_ba_pred,
+                translation_ba_pred,
+            )
+            transformed_target_gt = transform_point_cloud(
+                target,
+                rotation_ba_gt,
+                translation_ba_gt,
+            )
+
+            mse_ab = torch.mean(
+                (transformed_src_pred - transformed_src_gt) ** 2
+            )
+            mae_ab = torch.mean(
+                torch.abs(
+                    transformed_src_pred - transformed_src_gt
+                )
+            )
+            mse_ba = torch.mean(
+                (transformed_target_pred - transformed_target_gt) ** 2
+            )
+            mae_ba = torch.mean(
+                torch.abs(
+                    transformed_target_pred
+                    - transformed_target_gt
+                )
+            )
+
+        total_loss += loss.item() * batch_size
+        total_cycle_loss += weighted_cycle_loss * batch_size
+        total_rotation_loss += rotation_loss.item() * batch_size
+        total_translation_loss += (
+            translation_loss.item() * batch_size
+        )
+        total_grad_norm += (
+            float(grad_norm_tensor.item()) * batch_size
+        )
+
+        total_mse_ab += mse_ab.item() * batch_size
+        total_mae_ab += mae_ab.item() * batch_size
+        total_mse_ba += mse_ba.item() * batch_size
+        total_mae_ba += mae_ba.item() * batch_size
+
+    return {
         'train_loss': total_loss / total_examples,
-        'train_cycle_loss': total_cycle_loss / total_examples if total_examples > 0 else 0,
+        'train_cycle_loss': total_cycle_loss / total_examples,
         'train_mse_ab': total_mse_ab / total_examples,
         'train_mae_ab': total_mae_ab / total_examples,
         'train_mse_ba': total_mse_ba / total_examples,
         'train_mae_ba': total_mae_ba / total_examples,
-        'train_rotation_loss': total_rotation_loss / total_examples,
-        'train_translation_loss': total_translation_loss / total_examples,
-        'grad_norm': grad_norm,
+        'train_rotation_loss': (
+            total_rotation_loss / total_examples
+        ),
+        'train_translation_loss': (
+            total_translation_loss / total_examples
+        ),
+        'grad_norm': total_grad_norm / total_examples,
     }
-    return train_metrics
 
+@torch.no_grad()
 @torch.no_grad()
 def validate_one_epoch(args, net, test_loader, textio, epoch):
     net.eval()
-    total_loss = 0
-    total_cycle_loss = 0
-    total_mse_ab = 0
-    total_mae_ab = 0
-    total_mse_ba = 0
-    total_mae_ba = 0
+
+    total_loss = 0.0
+    total_cycle_loss = 0.0
+    total_mse_ab = 0.0
+    total_mae_ab = 0.0
+    total_mse_ba = 0.0
+    total_mae_ba = 0.0
     num_examples = 0
+
+    from util import transform_point_cloud
 
     for src, target, rotation_ab, translation_ab in tqdm(test_loader):
         src = src.to(args.device)
@@ -186,20 +280,43 @@ def validate_one_epoch(args, net, test_loader, textio, epoch):
         batch_size = src.size(0)
         num_examples += batch_size
 
-        rotation_ab_pred, translation_ab_pred, rotation_ba_pred, translation_ba_pred = net(src, target)
+        (
+            rotation_ab_pred,
+            translation_ab_pred,
+            rotation_ba_pred,
+            translation_ba_pred,
+        ) = net(src, target)
 
-        identity = torch.eye(3, device=args.device).unsqueeze(0).repeat(batch_size, 1, 1)
+        identity = torch.eye(
+            3,
+            device=args.device,
+        ).unsqueeze(0).expand(batch_size, -1, -1)
 
-        from util import transform_point_cloud
-        transformed_src = transform_point_cloud(src, rotation_ab_pred, translation_ab_pred)
-        transformed_target = transform_point_cloud(target, rotation_ba_pred, translation_ba_pred)
+        rotation_loss = F.mse_loss(
+            torch.matmul(
+                rotation_ab_pred.transpose(2, 1),
+                rotation_ab,
+            ),
+            identity,
+        )
 
-        rotation_loss = F.mse_loss(torch.matmul(rotation_ab_pred.transpose(2, 1), rotation_ab), identity)
-        translation_loss = F.mse_loss(translation_ab_pred, translation_ab)
+        translation_loss = F.mse_loss(
+            translation_ab_pred,
+            translation_ab,
+        )
+
         loss = rotation_loss + translation_loss
+        weighted_cycle_loss = 0.0
 
         if args.cycle:
-            rotation_loss_cycle = F.mse_loss(torch.matmul(rotation_ba_pred, rotation_ab_pred), identity)
+            rotation_loss_cycle = F.mse_loss(
+                torch.matmul(
+                    rotation_ba_pred,
+                    rotation_ab_pred,
+                ),
+                identity,
+            )
+
             cycle_translation = (
                 torch.matmul(
                     rotation_ba_pred,
@@ -207,31 +324,87 @@ def validate_one_epoch(args, net, test_loader, textio, epoch):
                 ).squeeze(2)
                 + translation_ba_pred
             )
+
             translation_loss_cycle = torch.mean(
                 cycle_translation ** 2
             )
-            cycle_loss = rotation_loss_cycle + translation_loss_cycle
-            loss = loss + cycle_loss * 0.1
-            total_cycle_loss += cycle_loss.item() * 0.1 * batch_size
+
+            cycle_loss = (
+                rotation_loss_cycle
+                + translation_loss_cycle
+            )
+
+            loss = loss + 0.1 * cycle_loss
+            weighted_cycle_loss = 0.1 * cycle_loss.item()
+
         if not torch.isfinite(loss).item():
             raise RuntimeError(
                 "Loss non finita durante la validation."
             )
-        total_loss += loss.item() * batch_size
-        total_mse_ab += torch.mean((transformed_src - target) ** 2, dim=[0, 1, 2]).item() * batch_size
-        total_mae_ab += torch.mean(torch.abs(transformed_src - target), dim=[0, 1, 2]).item() * batch_size
-        total_mse_ba += torch.mean((transformed_target - src) ** 2, dim=[0, 1, 2]).item() * batch_size
-        total_mae_ba += torch.mean(torch.abs(transformed_target - src), dim=[0, 1, 2]).item() * batch_size
 
-    val_metrics = {
-        'val_loss': total_loss / num_examples if num_examples > 0 else 0,
-        'val_cycle_loss': total_cycle_loss / num_examples if num_examples > 0 else 0,
-        'val_mse_ab': total_mse_ab / num_examples if num_examples > 0 else 0,
-        'val_mae_ab': total_mae_ab / num_examples if num_examples > 0 else 0,
-        'val_mse_ba': total_mse_ba / num_examples if num_examples > 0 else 0,
-        'val_mae_ba': total_mae_ba / num_examples if num_examples > 0 else 0,
+        rotation_ba_gt = rotation_ab.transpose(
+            2, 1
+        ).contiguous()
+
+        translation_ba_gt = -torch.matmul(
+            rotation_ba_gt,
+            translation_ab.unsqueeze(2),
+        ).squeeze(2)
+
+        transformed_src_pred = transform_point_cloud(
+            src,
+            rotation_ab_pred,
+            translation_ab_pred,
+        )
+        transformed_src_gt = transform_point_cloud(
+            src,
+            rotation_ab,
+            translation_ab,
+        )
+
+        transformed_target_pred = transform_point_cloud(
+            target,
+            rotation_ba_pred,
+            translation_ba_pred,
+        )
+        transformed_target_gt = transform_point_cloud(
+            target,
+            rotation_ba_gt,
+            translation_ba_gt,
+        )
+
+        mse_ab = torch.mean(
+            (transformed_src_pred - transformed_src_gt) ** 2
+        )
+        mae_ab = torch.mean(
+            torch.abs(
+                transformed_src_pred - transformed_src_gt
+            )
+        )
+        mse_ba = torch.mean(
+            (transformed_target_pred - transformed_target_gt) ** 2
+        )
+        mae_ba = torch.mean(
+            torch.abs(
+                transformed_target_pred - transformed_target_gt
+            )
+        )
+
+        total_loss += loss.item() * batch_size
+        total_cycle_loss += weighted_cycle_loss * batch_size
+        total_mse_ab += mse_ab.item() * batch_size
+        total_mae_ab += mae_ab.item() * batch_size
+        total_mse_ba += mse_ba.item() * batch_size
+        total_mae_ba += mae_ba.item() * batch_size
+
+    return {
+        'val_loss': total_loss / num_examples,
+        'val_cycle_loss': total_cycle_loss / num_examples,
+        'val_mse_ab': total_mse_ab / num_examples,
+        'val_mae_ab': total_mae_ab / num_examples,
+        'val_mse_ba': total_mse_ba / num_examples,
+        'val_mae_ba': total_mae_ba / num_examples,
     }
-    return val_metrics
 
 
 def main():
@@ -269,6 +442,7 @@ def main():
     parser.add_argument('--dset_mode', type=str, default='sweep', choices=['sweep', 'sparse'], help='Dataset mode')
     parser.add_argument('--dset_num_samples', type=int, default=5000, help='Number of training samples')
     parser.add_argument('--dset_n_points', type=int, default=None, help='Number of points')
+    parser.add_argument('--target_n_points', type=int, default=1024, help='Numero di punti del digital twin globale')
     parser.add_argument('--dset_rot_max', type=float, default=np.pi / 4, help='Max rotation per axis (radians)')
     parser.add_argument('--dset_trans_max', type=float, default=50.0, help='Max translation per axis (mm)')
     parser.add_argument('--noise_sigma', type=float, default=0.3, help='Polaris tracker noise sigma in mm')
@@ -298,6 +472,7 @@ def main():
         mode=args.dset_mode,
         num_samples=args.dset_num_samples,
         n_points=args.dset_n_points,
+        target_n_points=args.target_n_points,
         rot_max=args.dset_rot_max,
         trans_max=args.dset_trans_max,
         noise_sigma=args.noise_sigma,
@@ -320,6 +495,7 @@ def main():
         mode=args.dset_mode,
         num_samples=args.val_num_samples,
         n_points=args.dset_n_points,
+        target_n_points=args.target_n_points,
         rot_max=args.dset_rot_max,
         trans_max=args.dset_trans_max,
         noise_sigma=args.noise_sigma,

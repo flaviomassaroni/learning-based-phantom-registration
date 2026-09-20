@@ -408,6 +408,17 @@ def evaluate(args):
         else config.get('dset_n_points')
     )
 
+    target_n_points = (
+        args.target_n_points
+        if args.target_n_points is not None
+        else int(config.get('target_n_points', 1024))
+    )
+
+    if target_n_points < 1:
+        raise ValueError(
+        "target_n_points deve essere almeno 1."
+    )
+    
     noise_sigma = (
         args.noise_sigma
         if args.noise_sigma is not None
@@ -435,6 +446,7 @@ def evaluate(args):
         mode=mode,
         num_samples=args.num_eval,
         n_points=n_points,
+        target_n_points=target_n_points,
         rot_max=float(
             config.get('dset_rot_max', np.pi / 4)
         ),
@@ -631,10 +643,14 @@ def evaluate(args):
             else "Modalità rete: evaluation standard"
     )
         textio.cprint(f"Mesh: {stl_path}")
+
         textio.cprint(
             f"Mode: {mode}, samples: {len(dataset)}, "
-            f"points: {dataset.n_points}, seed: {seed}"
+            f"source points: {dataset.n_points}, "
+            f"target points: {dataset.target_n_points}, "
+            f"seed: {seed}"
         )
+
         textio.cprint(
             f"Scale: {scale} mm, "
             f"noise sigma per coordinata: {noise_sigma} mm"
@@ -725,6 +741,17 @@ def main():
         default=None,
         help='Default: numero di punti usato nel training',
     )
+
+    parser.add_argument(
+        '--target_n_points',
+        type=int,
+        default=None,
+        help=(
+            'Default: numero di punti del digital twin '
+            'usato nel training'
+        ),
+    )
+
     parser.add_argument(
         '--noise_sigma',
         type=float,
