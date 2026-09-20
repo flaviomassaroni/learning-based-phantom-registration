@@ -6,4 +6,4 @@ checkpoints/
 data/
 .env
 phantom_v2/phantom.stl
-phantom_v2/phantom.stl
+phantom_v2/phantom_surface.stl
