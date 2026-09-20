@@ -6,6 +6,9 @@ Adatto da main.py: sostituisce ModelNet40 con PhantomDataset.
 Batch: (src, tgt, R, t) -> 4 tensori invece di 8.
 """
 
+
+import hashlib
+from correspondence_loss import geometric_correspondence_loss
 from __future__ import print_function
 import os
 import gc
@@ -44,6 +47,14 @@ def _init_(args):
 
     # Stesso percorso usato dal resto del training.
     experiment_dir = Path("checkpoints") / args.exp_name
+    if not args.resume and any(
+        (experiment_dir / "models").glob("*.t7")
+    ):
+        raise FileExistsError(
+            f"{experiment_dir} contiene già checkpoint. "
+            "Usa un nuovo --exp_name oppure --resume "
+            "per riprendere."
+    )
     (experiment_dir / "models").mkdir(
         parents=True,
         exist_ok=True,
@@ -54,6 +65,7 @@ def _init_(args):
         "model.py",
         "phantom_data.py",
         "util.py",
+        "correspondence_loss.py",
     ):
         source_path = source_dir / filename
         backup_path = experiment_dir / f"{filename}.backup"
@@ -61,7 +73,35 @@ def _init_(args):
         shutil.copy2(source_path, backup_path)
 
 
+def predict_with_aux_loss(
+    args,
+    net,
+    src,
+    target,
+    rotation_gt,
+    translation_gt,
+):
+    # La GT non entra mai nel forward della rete.
+    if getattr(args, "corr_weight", 0.0) == 0:
+        return net(src, target), src.new_zeros(())
 
+    outputs = net(
+        src,
+        target,
+        return_correspondence=True,
+    )
+
+    corr_loss = geometric_correspondence_loss(
+        outputs[4],
+        src,
+        target,
+        rotation_gt,
+        translation_gt,
+        args.network_scale_mm,
+        args.corr_sigma_mm,
+    )
+
+    return outputs[:4], corr_loss
 
 def train_one_epoch(args, net, train_loader, optimizer, textio, epoch):
     net.train()
@@ -76,6 +116,8 @@ def train_one_epoch(args, net, train_loader, optimizer, textio, epoch):
     total_translation_loss = 0.0
     total_grad_norm = 0.0
     total_examples = 0
+    total_corr_loss = 0.0
+    total_objective = 0.0
 
     from util import transform_point_cloud
 
@@ -90,12 +132,21 @@ def train_one_epoch(args, net, train_loader, optimizer, textio, epoch):
 
         optimizer.zero_grad(set_to_none=True)
 
+        predictions, corr_loss = predict_with_aux_loss(
+            args,
+            net,
+            src,
+            target,
+            rotation_ab,
+            translation_ab,
+        )
+
         (
             rotation_ab_pred,
             translation_ab_pred,
             rotation_ba_pred,
             translation_ba_pred,
-        ) = net(src, target)
+        ) = predictions
 
         identity = torch.eye(
             3,
@@ -151,6 +202,13 @@ def train_one_epoch(args, net, train_loader, optimizer, textio, epoch):
             raise RuntimeError(
                 "Loss non finita durante il training."
             )
+        
+        pose_cycle_loss = loss
+
+        loss = (
+            loss
+            + getattr(args, "corr_weight", 0.0) * corr_loss
+        )
 
         loss.backward()
 
@@ -225,7 +283,9 @@ def train_one_epoch(args, net, train_loader, optimizer, textio, epoch):
                 )
             )
 
-        total_loss += loss.item() * batch_size
+        total_loss += pose_cycle_loss.item() * batch_size
+        total_corr_loss += corr_loss.item() * batch_size
+        total_objective += loss.item() * batch_size
         total_cycle_loss += weighted_cycle_loss * batch_size
         total_rotation_loss += rotation_loss.item() * batch_size
         total_translation_loss += (
@@ -242,6 +302,8 @@ def train_one_epoch(args, net, train_loader, optimizer, textio, epoch):
 
     return {
         'train_loss': total_loss / total_examples,
+        'train_corr_loss': total_corr_loss / total_examples,
+        'train_total_loss': total_objective / total_examples,
         'train_cycle_loss': total_cycle_loss / total_examples,
         'train_mse_ab': total_mse_ab / total_examples,
         'train_mae_ab': total_mae_ab / total_examples,
@@ -257,11 +319,12 @@ def train_one_epoch(args, net, train_loader, optimizer, textio, epoch):
     }
 
 @torch.no_grad()
-@torch.no_grad()
 def validate_one_epoch(args, net, test_loader, textio, epoch):
     net.eval()
 
     total_loss = 0.0
+    total_corr_loss = 0.0
+    total_objective = 0.0
     total_cycle_loss = 0.0
     total_mse_ab = 0.0
     total_mae_ab = 0.0
@@ -280,12 +343,21 @@ def validate_one_epoch(args, net, test_loader, textio, epoch):
         batch_size = src.size(0)
         num_examples += batch_size
 
+        predictions, corr_loss = predict_with_aux_loss(
+            args,
+            net,
+            src,
+            target,
+            rotation_ab,
+            translation_ab,
+        )
+
         (
             rotation_ab_pred,
             translation_ab_pred,
             rotation_ba_pred,
             translation_ba_pred,
-        ) = net(src, target)
+        ) = predictions
 
         identity = torch.eye(
             3,
@@ -337,7 +409,12 @@ def validate_one_epoch(args, net, test_loader, textio, epoch):
             loss = loss + 0.1 * cycle_loss
             weighted_cycle_loss = 0.1 * cycle_loss.item()
 
-        if not torch.isfinite(loss).item():
+        objective = (
+            loss
+            + getattr(args, "corr_weight", 0.0) * corr_loss
+        )
+
+        if not torch.isfinite(objective).item():
             raise RuntimeError(
                 "Loss non finita durante la validation."
             )
@@ -391,6 +468,8 @@ def validate_one_epoch(args, net, test_loader, textio, epoch):
         )
 
         total_loss += loss.item() * batch_size
+        total_corr_loss += corr_loss.item() * batch_size
+        total_objective += objective.item() * batch_size
         total_cycle_loss += weighted_cycle_loss * batch_size
         total_mse_ab += mse_ab.item() * batch_size
         total_mae_ab += mae_ab.item() * batch_size
@@ -399,6 +478,8 @@ def validate_one_epoch(args, net, test_loader, textio, epoch):
 
     return {
         'val_loss': total_loss / num_examples,
+        'val_corr_loss': total_corr_loss / num_examples,
+        'val_total_loss': total_objective / num_examples,
         'val_cycle_loss': total_cycle_loss / num_examples,
         'val_mse_ab': total_mse_ab / num_examples,
         'val_mae_ab': total_mae_ab / num_examples,
@@ -451,7 +532,54 @@ def main():
     parser.add_argument('--pretrained', type=str, default=None, help=('Carica solamente i pesi iniziali. '
                                                                       'Optimizer e scheduler ripartono da zero.'),
     )
+    parser.add_argument("--corr_weight", type=float, default=0.0, help=("Peso della KL geometrica source->target; "
+                                                                        "0 conserva la baseline"),)
+    parser.add_argument("--corr_sigma_mm", type=float, default=5.0, help=("Sigma in mm delle etichette geometriche soft"),)
+
+
     args = parser.parse_args()
+
+    if (
+        not np.isfinite(args.corr_weight)
+        or args.corr_weight < 0
+    ):
+        parser.error(
+            "--corr_weight deve essere finito e non negativo."
+        )
+
+    if (
+        not np.isfinite(args.corr_sigma_mm)
+        or args.corr_sigma_mm <= 0
+    ):
+        parser.error(
+            "--corr_sigma_mm deve essere positivo e finito."
+        )
+
+    if args.corr_weight > 0 and args.head != "svd":
+        parser.error(
+            "--corr_weight > 0 richiede --head svd."
+        )
+
+    if (
+        args.batch_size < 1
+        or args.epochs < 1
+        or args.scheduler < 1
+    ):
+        parser.error(
+            "batch_size, epochs e scheduler "
+            "devono essere positivi."
+        )
+
+    if args.dset_num_samples < 1 or args.val_num_samples < 1:
+        parser.error(
+            "Training e validation devono contenere "
+            "almeno un campione."
+        )
+
+    if args.resume and not os.path.isfile(args.resume):
+        parser.error(
+            f"Checkpoint resume non trovato: {args.resume}"
+        )
     if args.resume is not None and args.pretrained is not None:
         parser.error(
             '--resume e --pretrained non possono essere usati insieme.')

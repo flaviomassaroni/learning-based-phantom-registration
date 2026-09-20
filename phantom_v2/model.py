@@ -471,6 +471,7 @@ class SVDHead(nn.Module):
         tgt_embedding,
         src,
         tgt,
+        return_correspondence=False,
     ):
         """
         src_embedding: [B, D, Ns]
@@ -534,8 +535,10 @@ class SVDHead(nn.Module):
         R = V @ correction @ Ut
         t = (corr_mean - R @ src_mean).squeeze(2)
 
-        return R, t
+        if return_correspondence:
+            return R, t, scores
 
+        return R, t
 
 class DCP(nn.Module):
     def __init__(self, args):
@@ -564,25 +567,67 @@ class DCP(nn.Module):
         else:
             raise Exception('Not implemented')
 
-    def forward(self, *input):
-        # Processing both the clouds independently with shared weights (geometrically similar points have similar embedding, allowing matching)
+    def forward(self, *input, return_correspondence=False):
         src = input[0]
         tgt = input[1]
+
         src_embedding = self.emb_nn(src)
         tgt_embedding = self.emb_nn(tgt)
 
-        # src embedding p is the A embedding updated by cross-attention on B, sum is a residual connection as in the original transformer
-        src_embedding_p, tgt_embedding_p = self.pointer(src_embedding, tgt_embedding)
+        src_embedding_p, tgt_embedding_p = self.pointer(
+            src_embedding,
+            tgt_embedding,
+        )
 
         src_embedding = src_embedding + src_embedding_p
         tgt_embedding = tgt_embedding + tgt_embedding_p
 
-        # head produces rotation and translation (transformation from A to B)
-        rotation_ab, translation_ab = self.head(src_embedding, tgt_embedding, src, tgt)
-        if self.cycle: # Regularization term to force geometric consistance helping with noise and partial overlap
-            rotation_ba, translation_ba = self.head(tgt_embedding, src_embedding, tgt, src)
+        if return_correspondence:
+            if not isinstance(self.head, SVDHead):
+                raise ValueError(
+                    "Le corrispondenze richiedono head='svd'."
+                )
 
+            rotation_ab, translation_ab, logits = self.head(
+                src_embedding,
+                tgt_embedding,
+                src,
+                tgt,
+                return_correspondence=True,
+            )
         else:
-            rotation_ba = rotation_ab.transpose(2, 1).contiguous()
-            translation_ba = -torch.matmul(rotation_ba, translation_ab.unsqueeze(2)).squeeze(2)
-        return rotation_ab, translation_ab, rotation_ba, translation_ba
+            rotation_ab, translation_ab = self.head(
+                src_embedding,
+                tgt_embedding,
+                src,
+                tgt,
+            )
+
+        if self.cycle:
+            rotation_ba, translation_ba = self.head(
+                tgt_embedding,
+                src_embedding,
+                tgt,
+                src,
+            )
+        else:
+            rotation_ba = rotation_ab.transpose(
+                2, 1
+            ).contiguous()
+
+            translation_ba = -torch.matmul(
+                rotation_ba,
+                translation_ab.unsqueeze(2),
+            ).squeeze(2)
+
+        outputs = (
+            rotation_ab,
+            translation_ab,
+            rotation_ba,
+            translation_ba,
+        )
+
+        if return_correspondence:
+            return (*outputs, logits)
+
+        return outputs
