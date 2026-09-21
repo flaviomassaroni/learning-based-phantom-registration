@@ -50,7 +50,12 @@ class IOStream:
 TRE_TARGETS = np.empty((0, 3), dtype=np.float64)
 
 # 4 landmark points nel frame phantom (mm o m, coerente con la mesh STL).
-LANDMARK_POINTS = np.empty((0, 3), dtype=np.float64)
+LANDMARK_POINTS = np.array([
+    [2.5,  -65.0, 82.5],
+    [50.0, -65.0, 77.5],
+    [50.0,  25.0, 50.0],
+    [42.5, 102.5, 27.5],
+], dtype=np.float64)
 
 def apply_rigid_transform(points, R, t):
     """Applica una trasformazione a punti [N, 3]."""

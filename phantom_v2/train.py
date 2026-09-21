@@ -6,10 +6,8 @@ Adatto da main.py: sostituisce ModelNet40 con PhantomDataset.
 Batch: (src, tgt, R, t) -> 4 tensori invece di 8.
 """
 
-
 import hashlib
 from correspondence_loss import geometric_correspondence_loss
-from __future__ import print_function
 import os
 import gc
 import argparse
