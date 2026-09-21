@@ -43,12 +43,17 @@ class IOStream:
 
 
 # ============================================================
-# TRE targets — REPLACE when Prof provides anatomical landmarks
+# TRE targets
 # ============================================================
 # Coordinate nel frame phantom (mm o m, coerente con la mesh STL).
 # Placeholder: nessun target definito → TRE su tutti i punti allineati.
-TRE_TARGETS = np.empty((0, 3), dtype=np.float64)
-
+TRE_TARGETS = np.array([
+    [0.003488, -34.892820, 41.875931],
+    [0.024687, -14.234268, 43.863817],
+    [0.034754,   6.424284, 41.211098],
+    [0.022443,  27.082836, 37.631691],
+    [0.003493,  47.741388, 37.052715],
+], dtype=np.float64)
 # 4 landmark points nel frame phantom (mm o m, coerente con la mesh STL).
 LANDMARK_POINTS = np.array([
     [2.5,  -65.0, 82.5],
