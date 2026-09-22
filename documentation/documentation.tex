@@ -1,0 +1,421 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[italian]{babel}
+\usepackage{geometry}
+\geometry{margin=2.5cm}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{amsmath,amssymb}
+\usepackage{enumitem}
+\usepackage{booktabs}
+\usepackage{fancyhdr}
+
+\definecolor{codegray}{gray}{0.95}
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codeblue}{rgb}{0,0,0.8}
+\lstset{
+    basicstyle=\ttfamily\small,
+    backgroundcolor=\color{codegray},
+    commentstyle=\color{codegreen},
+    keywordstyle=\color{codeblue},
+    breaklines=true,
+    frame=single,
+    numbers=left,
+    numberstyle=\tiny,
+    showstringspaces=false,
+    tabsize=4,
+    language=Python
+}
+
+\sloppy
+
+% ---------- Specifica di funzione ----------
+\newenvironment{functionspec}[3]{%
+    \par\medskip\noindent
+    \textbf{Funzione:} \texttt{#1}\par
+    \textbf{Pre-condizioni:} #2\par
+    \textbf{Post-condizioni:} #3\par
+    \textbf{Spiegazione:}\par\noindent\ignorespaces
+}{%
+    \par\medskip
+}
+
+% ---------- Specifica di classe (senza itemize) ----------
+\newenvironment{classspec}[2]{%
+    \par\medskip\noindent
+    \textbf{Classe:} \texttt{#1}\par
+    \textbf{Descrizione:} #2\par
+    \textbf{Metodi:}\par
+    \begingroup
+    \setlength{\parindent}{0pt}%
+    \setlength{\parskip}{2pt}%
+}{%
+    \endgroup
+    \par\medskip
+}
+
+\newcommand{\method}[3]{%
+    \noindent\hspace*{1.2em}\textbullet~\texttt{#1} --- \textit{Pre:} #2; \textit{Post:} #3\par
+}
+
+\title{Documentazione del codice per la registrazione del phantom cervicale con Deep Closest Point adattato}
+\author{Progetto di Robotica Medica}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+\tableofcontents
+\newpage
+
+\section{Introduzione}
+
+Questo documento descrive in dettaglio l'implementazione del progetto di registrazione del phantom cervicale basata su Deep Closest Point (DCP) adattato. Il codice originale di DCP \cite{dcp} è stato modificato per operare su dati sintetici generati da una mesh STL del phantom, con l'obiettivo di stimare la trasformazione rigida Polaris \(\rightarrow\) phantom a partire da acquisizioni parziali (sweep o sparse) senza punti fiduciali prescritti.
+
+La struttura del documento segue l'organizzazione dei file sorgente. Per ogni file vengono elencate le funzioni e le classi, ciascuna corredata da pre-condizioni, post-condizioni e una spiegazione del ruolo. Particolare attenzione è dedicata alla sezione \ref{sec:modifiche}, che riassume i cambiamenti rispetto al repository DCP originale.
+
+\section{Panoramica dei file}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}lp{10cm}@{}}
+\toprule
+File & Contenuto principale \\
+\midrule
+\texttt{evaluate.py} & Valutazione TRE, baseline SVD a 4 punti, metriche di rotazione e traslazione. \\
+\texttt{train.py} & Loop di training e validazione, gestione checkpoint, loss di corrispondenza. \\
+\texttt{test\_correspondence.py} & Test unitari per la loss di corrispondenza, il modello e il dataset. \\
+\texttt{phantom\_data.py} & Generazione del dataset sintetico da mesh STL (sweep/sparse). \\
+\texttt{model.py} & Architettura DCP adattata (DGCNN, Transformer, SVDHead, MLPHead). \\
+\texttt{correspondence\_loss.py} & Loss di corrispondenza geometrica basata su KL divergenza. \\
+\texttt{util.py} & Funzioni di utilità (quaternioni, trasformazione di point cloud). \\
+\texttt{unify.py} & Script per unire mesh STL multiple in un unico file. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Modifiche rispetto al DCP originale}
+\label{sec:modifiche}
+
+Il codice originale di DCP \cite{dcp} è stato adattato per il caso d'uso del phantom cervicale. Le modifiche principali sono:
+
+\begin{enumerate}
+    \item \textbf{Dataset sintetico}: sostituzione di ModelNet40 con \texttt{PhantomDataset}, che campiona point cloud da una mesh STL e genera trasformazioni rigide note.
+    \item \textbf{GroupNorm in DGCNN}: le BatchNorm sono state sostituite con GroupNorm per garantire stabilità con batch di piccole dimensioni e per evitare dipendenze dalle statistiche del batch durante la valutazione.
+    \item \textbf{Loss di corrispondenza geometrica}: aggiunta della \texttt{geometric\_correspondence\_loss} (KL tra distribuzione geometrica e distribuzione appresa) come supervisione ausiliaria opzionale.
+    \item \textbf{Modalità \texttt{return\_correspondence}}: \texttt{DCP} e \texttt{SVDHead} possono restituire i logits delle corrispondenze per il calcolo della loss ausiliaria.
+    \item \textbf{Scala di rete}: introduzione di \texttt{network\_scale\_mm} per normalizzare le coordinate in millimetri in unità della rete, mantenendo la coerenza tra training e valutazione.
+    \item \textbf{Gestione del digital twin}: il riferimento globale (\texttt{reference\_phantom}) viene generato una sola volta e salvato nel checkpoint per garantire che training, validation e test utilizzino la stessa discretizzazione.
+    \item \textbf{Valutazione TRE}: \texttt{evaluate.py} implementa il calcolo del Target Registration Error su target anatomici e la baseline SVD a 4 punti con rumore realistico.
+    \item \textbf{Test unitari}: aggiunta di \texttt{test\_correspondence.py} per verificare il corretto funzionamento della loss, del modello e del dataset.
+\end{enumerate}
+
+\section{File \texttt{util.py}}
+
+\subsection{Funzioni}
+
+\begin{functionspec}{quat2mat}{quat: tensore di forma [B, 4] con componenti (x, y, z, w).}{Matrice di rotazione [B, 3, 3].}
+Converte un batch di quaternioni in matrici di rotazione. Implementazione vettorizzata basata sulla formula esplicita del quaternione.
+\end{functionspec}
+
+\begin{functionspec}{transform\_point\_cloud}{point\_cloud: [B, 3, N]; rotation: [B, 3, 3] o [B, 4]; translation: [B, 3].}{Point cloud trasformato: [B, 3, N].}
+Applica la trasformazione rigida \((R, t)\) a un point cloud. Se \texttt{rotation} ha 4 componenti, viene convertita da quaternione tramite \texttt{quat2mat}.
+\end{functionspec}
+
+\begin{functionspec}{npmat2euler}{mats: array [B, 3, 3]; seq: stringa che specifica l'ordine degli assi per gli angoli di Eulero.}{Array [B, 3] di angoli di Eulero in gradi.}
+Converte un batch di matrici di rotazione in angoli di Eulero usando \texttt{scipy.spatial.transform.Rotation}.
+\end{functionspec}
+
+\section{File \texttt{model.py}}
+
+\subsection{Funzioni di supporto}
+
+\begin{functionspec}{clones}{module: modulo PyTorch; N: numero di copie.}{ModuleList contenente N copie indipendenti di \texttt{module}.}
+Crea N copie profonde di un modulo, utile per impilare layer identici ma con pesi indipendenti.
+\end{functionspec}
+
+\begin{functionspec}{attention}{query, key, value: tensori [B, h, N, d\_k]; mask: tensore opzionale; dropout: tasso di dropout.}{Output dell'attenzione e matrice dei pesi.}
+Implementa l'attenzione a prodotto scalare scalato (\textit{scaled dot-product attention}) come definita in \cite{vaswani2017attention}.
+\end{functionspec}
+
+\begin{functionspec}{nearest\_neighbor}{src, dst: tensori [C, N] e [C, M].}{Distanze e indici del punto più vicino in \texttt{dst} per ogni punto di \texttt{src}.}
+Calcola il nearest neighbor in modo esplicito espandendo le distanze euclidee al quadrato. Usato solo in contesti diagnostici.
+\end{functionspec}
+
+\begin{functionspec}{knn}{x: tensore [B, C, N]; k: numero di vicini.}{Indici dei k vicini più prossimi: [B, N, k\_eff].}
+Costruisce il grafo dei k-nearest neighbors. Il punto stesso è incluso. Se \(k > N\), viene limitato a \(N\).
+\end{functionspec}
+
+\begin{functionspec}{get\_graph\_feature}{x: tensore [B, C, N]; k: numero di vicini.}{Tensore [B, 2*C, N, k\_eff] contenente le feature di bordo.}
+Costruisce le feature di bordo concatenando le coordinate dei vicini e del centro, come nell'implementazione originale di DGCNN.
+\end{functionspec}
+
+\begin{functionspec}{make\_group\_norm}{num\_channels: numero di canali.}{Modulo \texttt{GroupNorm} configurato con il maggior numero di gruppi che divide esattamente i canali.}
+Sostituisce le BatchNorm originali con GroupNorm per migliorare la stabilità su batch piccoli.
+\end{functionspec}
+
+\subsection{Classi}
+
+\begin{classspec}{EncoderDecoder}{Architettura encoder-decoder basata su Transformer, usata dal modulo \texttt{Transformer} per raffinare le feature tramite self-attention e cross-attention.}
+\method{\_\_init\_\_}{encoder, decoder, src\_embed, tgt\_embed, generator: moduli PyTorch.}{Inizializza i componenti.}
+\method{forward}{src, tgt, src\_mask, tgt\_mask.}{Output del decoder dopo encoding e decoding.}
+\method{encode}{src, src\_mask.}{Memoria codificata.}
+\method{decode}{memory, src\_mask, tgt, tgt\_mask.}{Output del generatore.}
+\end{classspec}
+
+\begin{classspec}{Generator}{Rete fully-connected che produce una stima diretta di rotazione (quaternione) e traslazione a partire da un embedding globale. Usata solo con \texttt{head=mlp}.}
+\method{\_\_init\_\_}{emb\_dims: dimensione dell'embedding.}{Inizializza i layer lineari e le proiezioni.}
+\method{forward}{x: embedding [B, D, N].}{Coppia (quaternione normalizzato, traslazione).}
+\end{classspec}
+
+\begin{classspec}{Encoder}{Stack di \(N\) layer encoder con LayerNorm finale.}
+\method{\_\_init\_\_}{layer, N.}{Clona il layer \(N\) volte.}
+\method{forward}{x, mask.}{Feature codificate.}
+\end{classspec}
+
+\begin{classspec}{Decoder}{Stack di \(N\) layer decoder con LayerNorm finale.}
+\method{\_\_init\_\_}{layer, N.}{Clona il layer \(N\) volte.}
+\method{forward}{x, memory, src\_mask, tgt\_mask.}{Feature decodificate.}
+\end{classspec}
+
+\begin{classspec}{LayerNorm}{Layer normalization personalizzata con parametri learnable \(\gamma\) e \(\beta\).}
+\method{\_\_init\_\_}{features, eps.}{Inizializza parametri e epsilon.}
+\method{forward}{x.}{Tensore normalizzato.}
+\end{classspec}
+
+\begin{classspec}{SublayerConnection}{Connessione residua con LayerNorm, usata nei layer encoder e decoder.}
+\method{\_\_init\_\_}{size, dropout.}{Inizializza LayerNorm.}
+\method{forward}{x, sublayer.}{\(x + \text{sublayer}(\text{LayerNorm}(x))\).}
+\end{classspec}
+
+\begin{classspec}{EncoderLayer}{Layer encoder composto da self-attention e feed-forward.}
+\method{\_\_init\_\_}{size, self\_attn, feed\_forward, dropout.}{Inizializza i sublayer.}
+\method{forward}{x, mask.}{Output del layer.}
+\end{classspec}
+
+\begin{classspec}{DecoderLayer}{Layer decoder composto da self-attention, cross-attention e feed-forward.}
+\method{\_\_init\_\_}{size, self\_attn, src\_attn, feed\_forward, dropout.}{Inizializza i sublayer.}
+\method{forward}{x, memory, src\_mask, tgt\_mask.}{Output del layer.}
+\end{classspec}
+
+\begin{classspec}{MultiHeadedAttention}{Attenzione multi-head con proiezioni lineari per Q, K, V e output.}
+\method{\_\_init\_\_}{h, d\_model, dropout.}{Inizializza le proiezioni.}
+\method{forward}{query, key, value, mask.}{Output dell'attenzione multi-head.}
+\end{classspec}
+
+\begin{classspec}{PositionwiseFeedForward}{Rete feed-forward a due strati applicata indipendentemente a ciascun punto.}
+\method{\_\_init\_\_}{d\_model, d\_ff, dropout.}{Inizializza i layer lineari.}
+\method{forward}{x.}{Output del feed-forward.}
+\end{classspec}
+
+\begin{classspec}{PointNet}{Encoder PointNet con 5 convoluzioni 1D e BatchNorm. Usato quando \texttt{emb\_nn=pointnet}.}
+\method{\_\_init\_\_}{emb\_dims.}{Inizializza convoluzioni e BatchNorm.}
+\method{forward}{x: [B, 3, N].}{Embedding [B, emb\_dims, N].}
+\end{classspec}
+
+\begin{classspec}{DGCNN}{Encoder DGCNN con 5 convoluzioni 2D e GroupNorm. Usato quando \texttt{emb\_nn=dgcnn}.}
+\method{\_\_init\_\_}{emb\_dims, k.}{Inizializza convoluzioni e GroupNorm.}
+\method{forward}{x: [B, 3, N].}{Embedding [B, emb\_dims, N].}
+\end{classspec}
+
+\begin{classspec}{MLPHead}{Testa di regressione diretta che stima rotazione (quaternione) e traslazione da embedding concatenati.}
+\method{\_\_init\_\_}{args.}{Inizializza la MLP e le proiezioni.}
+\method{forward}{src\_embedding, tgt\_embedding.}{Matrice di rotazione e traslazione.}
+\end{classspec}
+
+\begin{classspec}{Identity}{Modulo no-op usato come pointer in DCP-v1.}
+\method{forward}{*input.}{Restituisce gli input invariati.}
+\end{classspec}
+
+\begin{classspec}{Transformer}{Modulo pointer basato su Transformer che permette a ciascun point cloud di arricchire i propri embedding con informazioni dell'altro.}
+\method{\_\_init\_\_}{args.}{Inizializza encoder, decoder e attention.}
+\method{forward}{src, tgt.}{Coppia di embedding contestuali.}
+\end{classspec}
+
+\begin{classspec}{SVDHead}{Testa che risolve il problema di Procrustes tramite SVD differenziabile per ottenere la trasformazione rigida.}
+\method{\_\_init\_\_}{args.}{Registra il buffer \texttt{reflect} per correggere riflessioni.}
+\method{forward}{src\_embedding, tgt\_embedding, src, tgt, return\_correspondence.}{Rotazione, traslazione e (opzionalmente) logits delle corrispondenze.}
+\end{classspec}
+
+\begin{classspec}{DCP}{Modello completo che combina encoder, pointer e testa per stimare la trasformazione rigida tra due point cloud.}
+\method{\_\_init\_\_}{args.}{Inizializza encoder, pointer e testa in base agli argomenti.}
+\method{forward}{src, tgt, return\_correspondence.}{Rotazione e traslazione (e logits se richiesto).}
+\end{classspec}
+
+\section{File \texttt{correspondence\_loss.py}}
+
+\begin{functionspec}{geometric\_correspondence\_loss}{logits: [B, Ns, Nt] logits della rete; src, target: [B, 3, Ns] e [B, 3, Nt]; rotation\_gt, translation\_gt: trasformazione ground truth; network\_scale\_mm: scala in mm; sigma\_mm: deviazione standard geometrica in mm.}{Scalare: KL divergenza media tra distribuzione geometrica e distribuzione appresa.}
+Calcola la loss di corrispondenza geometrica come KL(\(q_{GT} \| p_{rete}\)). Le etichette \(q_{GT}\) sono costruite trasformando \texttt{src} con la GT e calcolando le distanze da \texttt{target}, quindi applicando una softmax con temperatura \(\sigma\). I logits della rete vengono normalizzati con log-softmax. La loss incoraggia la rete a riprodurre la distribuzione geometrica delle corrispondenze.
+\end{functionspec}
+
+\section{File \texttt{phantom\_data.py}}
+
+\subsection{Eccezioni}
+
+\begin{classspec}{MeshLoadError}{Eccezione sollevata quando la mesh non può essere caricata o non è valida. Non definisce metodi propri: è una sottoclasse vuota di \texttt{Exception}.}
+\method{\_\_init\_\_}{messaggio di errore.}{Istanza di eccezione con messaggio associato.}
+\end{classspec}
+
+\subsection{Funzioni}
+
+\begin{functionspec}{load\_mesh}{stl\_path: percorso al file STL.}{Oggetto \texttt{trimesh.Trimesh} validato.}
+Carica la mesh con \texttt{trimesh}, verifica che non sia vuota e che le aree delle facce siano finite e positive. Rimuove facce degeneri se presenti.
+\end{functionspec}
+
+\begin{functionspec}{build\_face\_neighbors}{mesh: oggetto Trimesh.}{Matrice sparsa CSR delle adiacenze tra facce.}
+Costruisce il grafo delle facce che condividono uno spigolo, rendendolo simmetrico.
+\end{functionspec}
+
+\begin{functionspec}{\_sample\_triangles}{mesh; face\_ids: array di indici di facce; rng: generatore casuale.}{Array [len(face\_ids), 3] di punti campionati uniformemente sulle facce.}
+Campiona un punto uniforme in ciascuna faccia selezionata usando coordinate baricentriche.
+\end{functionspec}
+
+\begin{functionspec}{farthest\_point\_sample}{points: [N, 3]; n\_points: numero di punti da selezionare; rng.}{Array [n\_points, 3] di punti selezionati.}
+Seleziona \texttt{n\_points} punti distribuiti uniformemente tramite Farthest Point Sampling. Utile per costruire un digital twin ben distribuito.
+\end{functionspec}
+
+\begin{functionspec}{sample\_mesh\_surface}{mesh; n\_points; strategy: 'random' o 'patch'; rng; face\_neighbors; face\_probabilities; patch\_radius\_mm.}{Array [n\_points, 3] di punti sulla superficie.}
+Campiona punti sulla superficie della mesh. Se \texttt{strategy=patch}, costruisce una patch connessa entro un raggio specificato; altrimenti campiona casualmente in base all'area delle facce.
+\end{functionspec}
+
+\begin{functionspec}{\_sample\_patch}{mesh; n\_points; rng; face\_neighbors; face\_probabilities; patch\_radius\_mm.}{Array [n\_points, 3] di punti nella patch.}
+Costruisce una patch connessa a partire da una faccia seme, includendo le facce raggiungibili entro \texttt{patch\_radius\_mm}. Campiona quindi \texttt{n\_points} punti all'interno della patch.
+\end{functionspec}
+
+\begin{functionspec}{generate\_transform}{rng; rot\_max; trans\_max; euler\_seq.}{Tuple (R\_ab, t\_ab, R\_ba, t\_ba).}
+Genera una trasformazione rigida casuale con rotazioni limitate per asse e traslazioni limitate per asse. Restituisce anche l'inversa.
+\end{functionspec}
+
+\subsection{Classe \texttt{PhantomDataset}}
+
+\begin{classspec}{PhantomDataset}{Dataset PyTorch che genera coppie di point cloud (src, tgt, R, t) da una mesh STL. Supporta due modalità: \texttt{sweep} (patch connessa) e \texttt{sparse} (punti sparsi).}
+\method{\_\_init\_\_}{stl\_path, mode, num\_samples, n\_points, target\_n\_points, rot\_max, trans\_max, noise\_sigma, factor, seed, network\_scale\_mm, patch\_radius\_mm.}{Carica la mesh, valida i parametri, genera il digital twin di riferimento e prepara le probabilità delle facce. Se \texttt{mode=sweep}, costruisce le adiacenze.}
+\method{\_\_len\_\_}{}{Numero di campioni.}
+\method{\_\_getitem\_\_}{item: indice.}{Tuple (src\_tensor, tgt\_tensor, R\_gt\_tensor, t\_gt\_tensor). Genera una coppia di point cloud con trasformazione nota, applica rumore e normalizza le coordinate.}
+\end{classspec}
+
+\section{File \texttt{train.py}}
+
+\subsection{Funzioni}
+
+\begin{functionspec}{\_init\_\_}{args: namespace degli argomenti.}{Crea la directory dell'esperimento e copia i file sorgente come backup.}
+Verifica che non esistano già checkpoint (a meno che non si usi \texttt{--resume}), crea la cartella \texttt{checkpoints/<exp\_name>/models} e salva copie dei file sorgente.
+\end{functionspec}
+
+\begin{functionspec}{predict\_with\_aux\_loss}{args; net; src, target, rotation\_gt, translation\_gt.}{Tuple (predizioni, corr\_loss).}
+Se \texttt{corr\_weight > 0}, esegue il forward con \texttt{return\_correspondence=True} e calcola la loss di corrispondenza geometrica. Altrimenti restituisce le predizioni standard e una loss nulla.
+\end{functionspec}
+
+\begin{functionspec}{train\_one\_epoch}{args; net; train\_loader; optimizer; textio; epoch.}{Dizionario di metriche di training.}
+Esegue un'epoca di training. Calcola la loss di pose (MSE su rotazione e traslazione), opzionalmente la cycle consistency loss e la loss di corrispondenza. Esegue backpropagation con clipping dei gradienti. Restituisce metriche medie pesate per batch.
+\end{functionspec}
+
+\begin{functionspec}{validate\_one\_epoch}{args; net; test\_loader; textio; epoch.}{Dizionario di metriche di validazione.}
+Esegue la validazione in modalità \texttt{eval()}. Calcola le stesse metriche del training ma senza aggiornare i pesi.
+\end{functionspec}
+
+\begin{functionspec}{main}{}{}
+Punto di ingresso del training. Gestisce il parsing degli argomenti, la validazione dei parametri, la creazione dei dataset, il modello, l'ottimizzatore e lo scheduler. Esegue il loop di training per il numero di epoche specificato, salva i checkpoint (ultimo e migliore) e registra le metriche su TensorBoard.
+\end{functionspec}
+
+\section{File \texttt{evaluate.py}}
+
+\subsection{Classe \texttt{IOStream}}
+
+\begin{classspec}{IOStream}{Classe per la scrittura di log su file e console.}
+\method{\_\_init\_\_}{path: percorso del file di log (o None).}{Apre il file in modalità append se il percorso è fornito.}
+\method{cprint}{text: stringa.}{Stampa il testo e lo scrive nel file se aperto.}
+\method{close}{}{Chiude il file.}
+\end{classspec}
+
+\subsection{Funzioni}
+
+\begin{functionspec}{apply\_rigid\_transform}{points: [N, 3]; R: [3, 3]; t: [3].}{Punti trasformati [N, 3].}
+Applica la trasformazione rigida \(p' = R p + t\) a ciascun punto.
+\end{functionspec}
+
+\begin{functionspec}{fit\_rigid\_svd}{src\_pts, tgt\_pts: [N, 3] con N \(\geq\) 3.}{Coppia (R, t) che mappa \texttt{src\_pts} su \texttt{tgt\_pts}.}
+Stima la trasformazione rigida tramite SVD (soluzione di Procrustes). Verifica che i punti non siano degeneri (rango \(\geq 2\)) e che il determinante di R sia \(+1\).
+\end{functionspec}
+
+\begin{functionspec}{rotation\_error\_deg}{R\_pred, R\_gt: [3, 3].}{Errore angolare in gradi.}
+Calcola l'angolo della rotazione relativa \(R_{pred} R_{gt}^T\).
+\end{functionspec}
+
+\begin{functionspec}{translation\_error\_mm}{t\_pred\_mm, t\_gt\_mm: [3].}{Distanza euclidea in mm.}
+Calcola la norma della differenza tra le traslazioni.
+\end{functionspec}
+
+\begin{functionspec}{compute\_tre}{R\_pred, t\_pred\_mm, R\_gt, t\_gt\_mm, target\_pts\_phantom\_mm: [N, 3].}{Array [N] di errori TRE in mm.}
+Calcola il Target Registration Error per ciascun target. I target sono definiti nel frame phantom; la trasformazione GT viene usata per portarli nel frame Polaris, quindi la trasformazione predetta li riporta nel phantom. L'errore è la norma della differenza.
+\end{functionspec}
+
+\begin{functionspec}{svd\_baseline\_4pts}{landmark\_pts\_mm: [4, 3]; R\_gt, t\_gt\_mm; rng; noise\_sigma\_mm.}{Coppia (R, t) stimata dalla baseline.}
+Simula l'acquisizione di 4 landmark noti con rumore gaussiano e stima la trasformazione tramite SVD. Restituisce la trasformazione stimata.
+\end{functionspec}
+
+\begin{functionspec}{test\_evaluation\_math}{}{}
+Test unitario che verifica la correttezza delle funzioni di valutazione: SVD senza rumore, TRE nullo, errore di 1 mm e rotazione di 90 gradi.
+\end{functionspec}
+
+\begin{functionspec}{evaluate}{args: namespace degli argomenti.}{Dizionario di metriche riassuntive.}
+Carica il checkpoint, ricostruisce il modello, crea il dataset di valutazione ed esegue la valutazione. Calcola metriche per DCP e baseline (se i landmark sono definiti). Salva i risultati in \texttt{eval.log} e restituisce un dizionario con statistiche (media, std, mediana, p95, max) per ciascuna metrica.
+\end{functionspec}
+
+\begin{functionspec}{main}{}{}
+Punto di ingresso per la valutazione. Gestisce il parsing degli argomenti e chiama \texttt{evaluate}.
+\end{functionspec}
+
+\section{File \texttt{test\_correspondence.py}}
+
+\begin{functionspec}{small\_args}{**overrides.}{Namespace con parametri di default per test.}
+Crea un namespace con parametri ridotti per eseguire test veloci.
+\end{functionspec}
+
+\begin{classspec}{CorrespondenceTests}{Suite di test unitari per la loss di corrispondenza, il modello DCP e il dataset.}
+\method{setUpClass}{}{Imposta il numero di thread di PyTorch a 1.}
+\method{setUp}{}{Inizializza tensori di test e seed.}
+\method{loss}{logits, src, tgt, scale.}{Wrapper per \texttt{geometric\_correspondence\_loss}.}
+\method{test\_forward\_and\_checkpoint}{}{Verifica il forward del modello e il salvataggio/caricamento dello stato.}
+\method{test\_geometric\_optimum\_and\_scale}{}{Verifica che la loss sia minima in corrispondenza della soluzione geometrica e che sia invariante alla scala.}
+\method{test\_gradients\_only\_through\_prediction}{}{Verifica che i gradienti fluiscano solo attraverso i logits.}
+\method{test\_permutation\_invariance}{}{Verifica l'invarianza all'ordine dei punti.}
+\method{test\_backward\_with\_and\_without\_cycle}{}{Verifica la backpropagation con e senza cycle consistency.}
+\method{test\_epoch\_metrics\_and\_disabled\_loss}{}{Verifica le metriche di training/validation e il comportamento con \texttt{corr\_weight=0}.}
+\method{test\_dataset\_reference\_and\_validation}{}{Verifica la generazione del dataset e la validazione dei parametri.}
+\method{test\_evaluation\_math}{}{Esegue il test di \texttt{evaluate.test\_evaluation\_math}.}
+\end{classspec}
+
+\section{File \texttt{unify.py}}
+
+Script che carica tutti i file STL presenti in una directory, li concatena in un'unica mesh e la esporta come \texttt{phantom\_combined.stl}. Stampa i bounds e gli extents della mesh risultante.
+
+\begin{lstlisting}[caption={unify.py}]
+import trimesh
+import os
+
+stl_dir = "ModelloPhantom"
+
+meshes = []
+for f in os.listdir(stl_dir):
+    if f.endswith('.stl'):
+        m = trimesh.load(os.path.join(stl_dir, f), force='mesh')
+        meshes.append(m)
+
+combined = trimesh.util.concatenate(meshes)
+combined.export("phantom_combined.stl")
+print(f"Bounds: {combined.bounds}")
+print(f"Extents: {combined.extents}")
+\end{lstlisting}
+
+\begin{thebibliography}{9}
+\bibitem{dcp} Y. Wang, J. M. Solomon, ``Deep Closest Point: Learning Representations for Point Cloud Registration,'' ICCV 2019. arXiv:1905.03304. Codice: \url{https://github.com/WangYueFt/dcp}.
+\bibitem{pointnetlk} Y. Aoki, H. Goforth, R. A. Srivatsan, S. Lucey, ``PointNetLK: Robust \& Efficient Point Cloud Registration Using PointNet,'' CVPR 2019. arXiv:1903.05711.
+\bibitem{fcgf} C. Choy, J. Park, V. Koltun, ``Fully Convolutional Geometric Features,'' ICCV 2019.
+\bibitem{vaswani2017attention} A. Vaswani et al., ``Attention is All You Need,'' NeurIPS 2017.
+\bibitem{arun1987} K. S. Arun, T. S. Huang, S. D. Blostein, ``Least-Squares Fitting of Two 3-D Point Sets,'' IEEE TPAMI, 9(5), 1987.
+\end{thebibliography}
+
+\end{document}

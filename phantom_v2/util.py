@@ -35,7 +35,7 @@ def quat2mat(quat):
 
 def transform_point_cloud(point_cloud, rotation, translation):
     '''Applies (R,t) to point cloud'''
-    if len(rotation.size()) == 2:
+    if len(rotation.size()) == 2: #if matrix is of the type [B,4] (quaternion)
         rot_mat = quat2mat(rotation)
     else:
         rot_mat = rotation

@@ -57,9 +57,6 @@ def knn(x, k=20):
         x.transpose(2, 1), x
     )
     xx = torch.sum(x ** 2, dim=1, keepdim=True)
-
-    # Distanze euclidee al quadrato, cambiate di segno:
-    # i valori maggiori corrispondono ai punti più vicini.
     negative_distances = -xx - inner - xx.transpose(2, 1)
 
     return negative_distances.topk(
@@ -73,7 +70,7 @@ def get_graph_feature(x, k=20):
     Output: [B, 2*C, N, k_eff]
 
     Ogni feature contiene [vicino, centro], mantenendo
-    la rappresentazione usata nel vostro DCP.
+    la rappresentazione usata nel DCP.
     """
     idx = knn(x, k=k)
     batch_size, num_points, k_eff = idx.shape

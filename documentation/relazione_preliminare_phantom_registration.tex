@@ -1,0 +1,892 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[provide=*,italian]{babel}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{fancyhdr}
+\usepackage{listings}
+
+\geometry{margin=2.5cm}
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!55!black,
+    citecolor=blue!55!black,
+    urlcolor=blue!55!black,
+    pdftitle={Registrazione learning-based del phantom cervicale},
+    pdfauthor={Giovanni Contursi}
+}
+
+\pagestyle{fancy}
+\fancyhf{}
+\lhead{Medical Robotics}
+\rhead{Registrazione del phantom cervicale}
+\cfoot{\thepage}
+\setlength{\headheight}{14pt}
+
+\setlist[itemize]{topsep=3pt,itemsep=2pt}
+\setlist[enumerate]{topsep=3pt,itemsep=2pt}
+
+\definecolor{todocolor}{RGB}{145,75,0}
+\newcommand{\todo}[1]{%
+    \par\noindent
+    \colorbox{yellow!25}{%
+        \parbox{0.94\linewidth}{\textcolor{todocolor}{\textbf{Da completare:} #1}}%
+    }\par
+}
+\newcommand{\R}{\mathbf{R}}
+\newcommand{\tvec}{\mathbf{t}}
+\newcommand{\x}{\mathbf{x}}
+\newcommand{\y}{\mathbf{y}}
+\newcommand{\code}[1]{\texttt{\detokenize{#1}}}
+\newcommand{\SI}[2]{\ensuremath{#1\,#2}}
+\newcommand{\si}[1]{\ensuremath{#1}}
+\newcommand{\milli}{\mathrm{m}}
+\newcommand{\metre}{\mathrm{m}}
+\newcommand{\degree}{^\circ}
+
+\lstset{
+    basicstyle=\ttfamily\small,
+    frame=single,
+    breaklines=true,
+    columns=fullflexible,
+    showstringspaces=false,
+    backgroundcolor=\color{black!2}
+}
+
+\title{%
+    \textbf{Registrazione learning-based del phantom cervicale\\
+    senza punti fiduciali prescritti}\\[0.4em]
+    \large Bozza della relazione tecnica e cronologia dello sviluppo
+}
+\author{Giovanni Contursi \and \textit{Altri componenti del gruppo da inserire}}
+\date{Stato del progetto: 22 settembre 2026}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Questo progetto studia la registrazione rigida tra un insieme parziale e non
+ordinato di punti acquisiti con un puntatore ottico e il digital twin di un
+phantom cervicale. Il metodo scelto è Deep Closest Point (DCP), che apprende
+descrittori e corrispondenze soft e ricava la trasformazione rigida mediante
+una testa SVD differenziabile. Sono considerate due modalità di acquisizione:
+uno \emph{sweep} denso e connesso e un insieme \emph{sparse} di pochi punti.
+Il confronto di riferimento è l'algoritmo clinico-esistente a quattro
+landmark con corrispondenze note, implementato mediante Procrustes/SVD.
+
+Il lavoro non si è limitato a eseguire il codice DCP originale. È stato
+costruito un generatore sintetico specifico per la mesh del phantom, sono
+stati corretti diversi protocolli iniziali troppo favorevoli, è stata resa
+possibile la registrazione partial-to-global con cardinalità differenti, sono
+state introdotte metriche invarianti all'ordine, una baseline ufficiale, il
+calcolo della target registration error (TRE), controlli di riproducibilità e
+una supervisione geometrica opzionale sulle corrispondenze. I risultati
+attuali mostrano che la loss geometrica migliora nettamente la modalità
+sparse, mentre per lo sweep è necessario un peso più moderato. La baseline a
+quattro punti rimane molto più accurata, ma richiede landmark noti e un ordine
+di acquisizione prescritto; il metodo appreso affronta invece un problema più
+difficile e completamente non ordinato.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+\section{Contesto e obiettivo}
+
+Il laboratorio dispone di un phantom fisico del distretto cervicale, del suo
+modello digitale triangolare e di un sistema di tracking ottico NDI Polaris
+Vega XT con puntatore calibrato. Il sistema attuale richiede di toccare quattro
+punti noti in un ordine prestabilito. Le quattro corrispondenze permettono di
+stimare in forma chiusa la trasformazione rigida dal frame Polaris al frame
+del phantom.
+
+L'obiettivo del progetto è rimuovere due vincoli operativi:
+
+\begin{itemize}
+    \item non richiedere punti anatomici prescritti;
+    \item non richiedere un ordine di acquisizione noto.
+\end{itemize}
+
+L'operatore deve poter acquisire un insieme parziale e non ordinato di punti
+sulla superficie raggiungibile. La rete deve stimare la stessa trasformazione
+
+\begin{equation}
+    \x_{\mathrm{phantom}} = \R\x_{\mathrm{Polaris}} + \tvec,
+    \qquad \R\in SO(3),\quad \tvec\in\mathbb{R}^3.
+\end{equation}
+
+Tra le varianti proposte dalla traccia è stata scelta V2, Deep Closest Point
+(DCP), perché mantiene la soluzione SVD/Procrustes del metodo esistente ma
+sostituisce le corrispondenze imposte con corrispondenze apprese. Il confronto
+concettuale è quindi particolarmente diretto.
+
+\subsection{Modalità di acquisizione}
+
+Sono state implementate entrambe le modalità richieste:
+
+\begin{description}
+    \item[Sweep.] Una patch superficiale connessa, densa e locale. Nel
+    protocollo iniziale vengono usati 512 punti e un raggio geodetico-euclideo
+    di circa \SI{20}{\milli\metre} attorno alla faccia seme.
+    \item[Sparse.] Un insieme non ordinato di punti sparsi sulla superficie.
+    Nel protocollo iniziale vengono usati 25 punti, all'interno dell'intervallo
+    20--50 indicato dalla traccia.
+\end{description}
+
+\todo{Verificare nella versione finale della relazione la terminologia della
+superficie acquisibile. La traccia parla di anatomia interna esposta, mentre
+un successivo chiarimento della docente ha indicato la superficie esterna
+(pelle). Gli esperimenti attuali usano \code{Prototipo_Scocca Esterna.stl},
+rinominata \code{phantom_surface.stl}. La scelta va documentata con il
+chiarimento ufficiale più recente.}
+
+\section{Fondamenti teorici}
+
+\subsection{Registrazione rigida con corrispondenze note}
+
+Dati due insiemi di punti corrispondenti $\{\x_i\}$ e $\{\y_i\}$, il problema
+classico consiste nel minimizzare
+
+\begin{equation}
+    \min_{\R,\tvec}
+    \sum_{i=1}^{N}\left\|\y_i-(\R\x_i+\tvec)\right\|_2^2,
+    \qquad \R^\top\R=\mathbf{I},\quad \det(\R)=1.
+\end{equation}
+
+Sottratti i centroidi, si costruisce la matrice di covarianza
+$\mathbf{H}=\sum_i(\x_i-\bar{\x})(\y_i-\bar{\y})^\top$. Dalla decomposizione
+$\mathbf{H}=\mathbf{U}\mathbf{\Sigma}\mathbf{V}^\top$ si ottiene
+
+\begin{equation}
+    \R=\mathbf{V}\mathbf{D}\mathbf{U}^\top,
+    \qquad
+    \tvec=\bar{\y}-\R\bar{\x},
+\end{equation}
+
+dove $\mathbf{D}=\operatorname{diag}(1,1,d)$ corregge le riflessioni e
+garantisce $\det(\R)=1$ \cite{arun1987}.
+
+La baseline ufficiale usa esattamente questo algoritmo su quattro landmark
+noti. DCP usa lo stesso principio, ma sostituisce ogni target noto con un punto
+virtuale ottenuto dalle corrispondenze probabilistiche.
+
+\subsection{Deep Closest Point}
+
+DCP contiene tre blocchi principali \cite{wang2019dcp}:
+
+\begin{enumerate}
+    \item un estrattore di feature, nel nostro caso DGCNN;
+    \item un Transformer che scambia informazione tra source e target;
+    \item una testa SVD che trasforma le corrispondenze soft in $(\R,\tvec)$.
+\end{enumerate}
+
+Indichiamo con $\mathbf{F}_s\in\mathbb{R}^{d\times N_s}$ e
+$\mathbf{F}_t\in\mathbb{R}^{d\times N_t}$ gli embedding. I punteggi di
+corrispondenza sono
+
+\begin{equation}
+    \mathbf{S}=\frac{\mathbf{F}_s^\top\mathbf{F}_t}{\sqrt{d}},
+    \qquad
+    \mathbf{W}=\operatorname{softmax}_{t}(\mathbf{S}).
+\end{equation}
+
+Per ogni punto source viene costruito un target virtuale
+
+\begin{equation}
+    \widehat{\y}_i=\sum_{j=1}^{N_t}W_{ij}\y_j.
+\end{equation}
+
+La SVD è quindi applicata alle coppie $(\x_i,\widehat{\y}_i)$. Questa
+formulazione supporta naturalmente $N_s\neq N_t$, condizione necessaria nel
+nostro protocollo: il source è parziale, mentre il target è il digital twin
+globale.
+
+\subsection{Metriche}
+
+Le metriche principali sono:
+
+\begin{description}
+    \item[Errore di rotazione.] Angolo della rotazione relativa
+    $\R_{\mathrm{pred}}\R_{\mathrm{gt}}^\top$, espresso in gradi.
+    \item[Errore di traslazione.] Norma euclidea
+    $\|\tvec_{\mathrm{pred}}-\tvec_{\mathrm{gt}}\|_2$, in millimetri.
+    \item[Source proxy.] Disaccordo medio, sui punti osservati, tra la
+    trasformazione predetta e la trasformazione ground truth. È una metrica
+    diagnostica e non deve essere confusa con la TRE anatomica.
+    \item[TRE.] Errore sui target clinicamente significativi. Ogni target,
+    definito nel frame phantom, viene trasformato nel frame Polaris con
+    l'inversa della ground truth e poi riportato nel phantom con la posa
+    stimata:
+    \begin{equation}
+        e_k=\left\|
+        \R_{\mathrm{pred}}
+        \R_{\mathrm{gt}}^\top(\mathbf{p}_k-\tvec_{\mathrm{gt}})
+        +\tvec_{\mathrm{pred}}-\mathbf{p}_k
+        \right\|_2.
+    \end{equation}
+\end{description}
+
+Per ogni metrica vengono riportati media, deviazione standard, mediana,
+95-esimo percentile e massimo. Media e mediana descrivono il caso tipico;
+$p_{95}$ e massimo evidenziano le code e i fallimenti.
+
+\section{Evoluzione del progetto}
+
+Questa sezione documenta anche i tentativi che non sono entrati nel protocollo
+finale. Sono importanti perché spiegano le scelte metodologiche e impediscono
+di interpretare come reali risultati ottenuti su problemi troppo semplici.
+
+\subsection{Analisi iniziale di traccia, articoli e modelli}
+
+Il lavoro è iniziato dall'analisi della traccia, dell'articolo DCP, del metodo
+least-squares/SVD e dei componenti STL del phantom. In questa fase sono stati
+chiariti:
+
+\begin{itemize}
+    \item la direzione della trasformazione, Polaris $\rightarrow$ phantom;
+    \item l'uso dei millimetri nel frame fisico;
+    \item la necessità di confrontare DCP e baseline sulla stessa TRE;
+    \item la separazione obbligatoria tra sweep e sparse;
+    \item la necessità di non usare quattro vertici casuali come baseline.
+\end{itemize}
+
+Inizialmente mancavano le coordinate ufficiali dei quattro landmark e dei
+target TRE. Per evitare una baseline artificiale, tali campi sono rimasti
+vuoti fino alla consegna del codice di registrazione e delle coordinate da
+parte dei docenti.
+
+\subsection{Adattamento del codice DCP al phantom}
+
+Il codice di riferimento DCP era progettato per dataset generici di point
+cloud. È stato introdotto \code{PhantomDataset}, che:
+
+\begin{itemize}
+    \item carica e valida la mesh STL con \code{trimesh};
+    \item elimina triangoli degeneri e verifica coordinate e aree finite;
+    \item campiona uniformemente punti sulle facce usando coordinate
+    baricentriche corrette;
+    \item costruisce il grafo di adiacenza delle facce per generare patch
+    connesse nello sweep;
+    \item genera trasformazioni rigide casuali con rotazioni Euler e
+    traslazioni limitate;
+    \item simula il source nel frame Polaris e aggiunge rumore gaussiano;
+    \item normalizza le coordinate fisiche mediante una scala comune di
+    \SI{100}{\milli\metre}.
+\end{itemize}
+
+Il test geometrico standalone verifica che la ground truth sia internamente
+coerente e visualizza la posizione della patch sulla mesh.
+
+\subsection{Prima versione: corrispondenze implicite troppo facili}
+
+Nella prima implementazione source e target contenevano gli stessi punti, nello
+stesso ordine, prima e dopo la trasformazione. Il modello poteva quindi
+sfruttare una corrispondenza uno-a-uno nascosta. Un test di overfitting produsse
+circa \SI{0.20}{\degree} di errore di rotazione e
+\SI{0.39}{\milli\metre} di errore di traslazione, ma il dato non rappresentava
+il problema operativo richiesto.
+
+La conseguenza è metodologicamente importante: un errore basso non è
+sufficiente a dimostrare la correttezza del protocollo. È necessario che il
+dataset non fornisca accidentalmente alla rete l'informazione che dovrebbe
+imparare.
+
+\subsection{Permutazioni e metriche invarianti all'ordine}
+
+Source e target sono stati successivamente permutati in modo indipendente.
+Questo ha fatto emergere un secondo problema: le metriche MSE/MAE iniziali
+confrontavano direttamente
+\code{transformed_src} con \code{target}. Tale confronto è valido soltanto se
+i punti sono corrispondenti e ordinati.
+
+Le metriche di training e validation sono state corrette confrontando la
+trasformazione predetta e la ground truth applicate allo stesso insieme di
+punti. Per il verso diretto, ad esempio,
+
+\begin{equation}
+    \operatorname{MSE}_{AB}=
+    \frac{1}{3N_s}\sum_i
+    \left\|
+      (\R_{\mathrm{pred}}\x_i+\tvec_{\mathrm{pred}})
+      -(\R_{\mathrm{gt}}\x_i+\tvec_{\mathrm{gt}})
+    \right\|_2^2.
+\end{equation}
+
+In questo modo la metrica misura davvero l'errore di posa e non dipende
+dall'ordine o dalla discretizzazione delle point cloud.
+
+\subsection{Campionamenti indipendenti}
+
+È stato poi rimosso il riuso delle stesse coordinate geometriche tra source e
+target. Un test di overfitting su point set indipendenti ma relativi alla stessa
+regione diede circa \SI{0.35}{\degree} e \SI{0.69}{\milli\metre}. Il risultato
+confermava che l'architettura e la SVD erano addestrabili, ma il problema era
+ancora locale-locale e non coincideva con la registrazione richiesta.
+
+\subsection{Passaggio definitivo a partial-to-global}
+
+La modifica più importante è stata definire correttamente i due ingressi:
+
+\begin{itemize}
+    \item \textbf{source}: acquisizione parziale, 512 punti sweep oppure 25
+    punti sparse, espressa nel frame Polaris e affetta da rumore;
+    \item \textbf{target}: discretizzazione globale del digital twin, 1024
+    punti nel frame phantom.
+\end{itemize}
+
+Il target globale viene creato una volta con Farthest Point Sampling (FPS) a
+partire da un insieme più ampio di candidati uniformi. Il seed dedicato rende
+la discretizzazione deterministica. Il target viene inoltre salvato nel
+checkpoint e ripristinato durante la valutazione: training, validation e test
+usano così esattamente lo stesso digital twin.
+
+Il passaggio a partial-to-global ha aumentato notevolmente la difficoltà. I
+primi smoke test mostrarono errori anche superiori a
+\SI{100}{\milli\metre}; ciò non era un semplice peggioramento del modello, ma
+la conseguenza del passaggio dal problema artificiale con corrispondenze
+implicite al problema reale con overlap parziale e molte ambiguità.
+
+\subsection{Cardinalità diverse nella testa SVD}
+
+La testa SVD originale assumeva implicitamente cardinalità compatibili. È
+stata riscritta per produrre una matrice di punteggi
+$N_s\times N_t$ e un target virtuale per ciascun punto source. È stata inoltre
+aggiunta la correzione esplicita delle riflessioni per garantire
+$\det(\R)=+1$. Questa modifica consente, ad esempio, di registrare 25 punti
+sparse contro 1024 punti del digital twin.
+
+\subsection{Stabilità con batch piccoli}
+
+I primi esperimenti di overfitting mostrarono una forte differenza tra
+training e validation. Una delle cause era l'uso di Batch Normalization con
+batch molto piccoli. Nel backbone DGCNN la BatchNorm è stata sostituita con
+GroupNorm, scegliendo automaticamente il maggior numero di gruppi compatibile
+fino a otto. La GroupNorm non dipende dalle statistiche correnti del batch e
+ha reso più coerenti training ed evaluation.
+
+\subsection{Baseline ufficiale e target TRE}
+
+Dopo la consegna del codice di registrazione dei docenti sono stati inseriti i
+quattro landmark ufficiali nel frame phantom:
+
+\begin{equation}
+\begin{split}
+    &(2.5,-65.0,82.5),\quad (50.0,-65.0,77.5),\\
+    &(50.0,25.0,50.0),\quad (42.5,102.5,27.5)\quad [\si{\milli\metre}].
+\end{split}
+\end{equation}
+
+Per ogni campione i landmark vengono portati nel frame Polaris con l'inversa
+della ground truth, viene aggiunto lo stesso rumore del tracker e la posa è
+stimata con SVD classica. La baseline e DCP sono quindi valutati sugli stessi
+campioni e sugli stessi target TRE.
+
+Sono stati definiti cinque target lungo la regione centrale cervicale, con
+particolare attenzione alla zona del midollo. La correttezza matematica della
+pipeline è verificata con casi sintetici: recupero esatto senza rumore, TRE
+nullo, traslazione di \SI{1}{\milli\metre} e rotazione nota di
+\SI{90}{\degree}.
+
+\subsection{Supervisione geometrica delle corrispondenze}
+
+La sola pose loss supervisiona l'uscita finale ma non impone direttamente che
+la matrice di attenzione rappresenti corrispondenze geometriche sensate. È
+stata quindi aggiunta una loss opzionale.
+
+La ground truth allinea ogni punto source nel frame phantom. Le distanze dai
+punti del target costruiscono una distribuzione soft
+
+\begin{equation}
+    q_{ij}=\operatorname{softmax}_j\left(
+      -\frac{\|\R_{gt}\x_i+\tvec_{gt}-\y_j\|^2}{2\sigma^2}
+    \right),
+\end{equation}
+
+con $\sigma=\SI{5}{\milli\metre}$. La rete produce
+$p_{ij}=\operatorname{softmax}_j(S_{ij})$ e viene minimizzata
+
+\begin{equation}
+    \mathcal{L}_{corr}=D_{KL}(q\|p).
+\end{equation}
+
+L'obiettivo totale è
+
+\begin{equation}
+    \mathcal{L}_{tot}=\mathcal{L}_{pose}
+    +0.1\mathcal{L}_{cycle}
+    +\lambda_{corr}\mathcal{L}_{corr},
+\end{equation}
+
+dove il termine di ciclo è presente soltanto se richiesto. La ground truth è
+usata esclusivamente per costruire la loss durante l'addestramento e non viene
+fornita agli ingressi della rete. Il checkpoint migliore continua a essere
+selezionato sulla pose validation loss, senza includere la KL, per non favorire
+un modello che predice buone corrispondenze ma una posa peggiore.
+
+\subsection{Riproducibilità e controlli}
+
+Sono stati aggiunti:
+
+\begin{itemize}
+    \item seed deterministici per campione e split separati;
+    \item salvataggio di argomenti, ottimizzatore, scheduler, epoca, digital
+    twin e hash SHA-256 della mesh;
+    \item distinzione tra \code{--resume} e \code{--pretrained};
+    \item blocco della sovrascrittura accidentale di esperimenti esistenti;
+    \item backup dei file sorgente nella directory di ogni esperimento;
+    \item clipping del gradiente e controlli su valori non finiti;
+    \item otto unit test su forward/backward, scale, permutazioni,
+    corrispondenze, checkpoint, dataset, SVD e TRE.
+\end{itemize}
+
+Tutti gli otto test risultano superati sia su Windows sia sul computer Linux
+usato per i training GPU.
+
+\section{Architettura e protocollo attuale}
+
+\subsection{Configurazione del modello}
+
+La configurazione principale usa:
+
+\begin{table}[h]
+\centering
+\caption{Configurazione DCP principale.}
+\begin{tabular}{ll}
+\toprule
+Componente & Configurazione \\
+\midrule
+Backbone & DGCNN, $k=20$ \\
+Dimensione embedding & 512 \\
+Pointer & Transformer, 1 blocco, 4 teste \\
+Feed-forward & 1024 unità \\
+Dropout & 0 \\
+Testa & SVD differenziabile \\
+Parametri addestrabili & 5\,568\,896 \\
+Normalizzazione & GroupNorm \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Generazione dei dati}
+
+Per ciascun indice del dataset viene creato un generatore indipendente a
+partire da \code{SeedSequence([seed, index])}. Ciò rende ogni campione
+riproducibile senza riutilizzare la stessa sequenza casuale.
+
+I parametri finora usati nei training principali sono:
+
+\begin{table}[h]
+\centering
+\caption{Protocollo sintetico di riferimento.}
+\begin{tabular}{ll}
+\toprule
+Parametro & Valore \\
+\midrule
+Rotazione massima per asse & \SI{0.17}{rad} ($\approx\SI{9.74}{\degree}$) \\
+Traslazione massima per asse & \SI{10}{\milli\metre} \\
+Rumore per coordinata & $\sigma=\SI{0.3}{\milli\metre}$ \\
+Scala rete & \SI{100}{\milli\metre} \\
+Target globale & 1024 punti FPS \\
+Sweep iniziale & 512 punti, raggio \SI{20}{\milli\metre} \\
+Sparse iniziale & 25 punti \\
+Training / validation & 5000 / 500 campioni \\
+Epoche & 50 \\
+Ottimizzatore & Adam, $10^{-3}$, weight decay $10^{-4}$ \\
+Scheduler & StepLR, fattore 0.5 dopo 25 epoche \\
+Gradient clipping & norma massima 1 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Loss di posa}
+
+La loss di rotazione non confronta direttamente gli elementi di due matrici
+arbitrarie, ma misura quanto la rotazione relativa si discosta dall'identità:
+
+\begin{equation}
+    \mathcal{L}_{R}=\operatorname{MSE}
+    (\R_{pred}^{\top}\R_{gt},\mathbf{I}),
+    \qquad
+    \mathcal{L}_{t}=\operatorname{MSE}
+    (\tvec_{pred},\tvec_{gt}).
+\end{equation}
+
+Le traslazioni sono espresse nelle unità normalizzate della rete durante il
+training e convertite una sola volta in millimetri durante l'evaluation.
+
+\section{Risultati sperimentali disponibili}
+
+\subsection{Come leggere i risultati}
+
+I valori di validation loss sono utili per selezionare checkpoint all'interno
+dello stesso protocollo, ma non sono direttamente interpretabili come
+millimetri. La metrica primaria del progetto è la TRE in evaluation su campioni
+held-out. Gli esperimenti iniziali con source e target corrispondenti sono
+considerati test di debug e non risultati finali.
+
+\subsection{Ablation del peso della loss geometrica}
+
+Il peso $\lambda_{corr}$ è stato confrontato sullo stesso development set di
+2000 campioni, seed 44. In questo modo la differenza è attribuibile al modello
+e non a campioni casuali differenti.
+
+\begin{table}[ht]
+\centering
+\caption{Ablation di $\lambda_{corr}$ in modalità sweep, development seed 44.
+Tutti gli errori lineari sono in millimetri.}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{crrrrrrr}
+\toprule
+$\lambda_{corr}$ & {Rot. media [deg]} & {Trasl. media} & {Proxy medio}
+& {TRE media} & {TRE mediana} & {TRE $p_{95}$} & {TRE max} \\
+\midrule
+0.00 & 7.963 & 12.971 & 17.801 & 14.028 & 13.390 & 24.843 & 45.863 \\
+0.01 & 8.067 & 13.351 & 17.281 & 14.061 & 13.258 & 25.815 & 52.394 \\
+0.03 & 7.631 & 12.504 & 13.931 & \bfseries 12.761 & \bfseries 11.582 & \bfseries 24.660 & 57.856 \\
+0.10 & 7.771 & 13.421 & \bfseries 11.991 & 13.433 & 11.903 & 27.260 & 90.501 \\
+\bottomrule
+\end{tabular}}
+\end{table}
+
+Per lo sweep, $\lambda_{corr}=0.03$ è il compromesso migliore. Rispetto a
+$\lambda=0$, la TRE media scende da 14.028 a
+\SI{12.761}{\milli\metre}, un miglioramento di circa il 9\%, e la mediana
+migliora di circa il 13.5\%. Il peso 0.1 ottiene il proxy migliore ma peggiora
+media, $p_{95}$ e soprattutto il massimo. Ciò indica che una supervisione
+troppo forte può ottimizzare le corrispondenze locali senza garantire la
+robustezza della posa globale.
+
+\begin{table}[ht]
+\centering
+\caption{Ablation di $\lambda_{corr}$ in modalità sparse, development seed 44.
+Tutti gli errori lineari sono in millimetri.}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{crrrrrrr}
+\toprule
+$\lambda_{corr}$ & {Rot. media [deg]} & {Trasl. media} & {Proxy medio}
+& {TRE media} & {TRE mediana} & {TRE $p_{95}$} & {TRE max} \\
+\midrule
+0.00 & 3.947 & 5.485 & 8.333 & 5.440 & 5.152 & 9.539 & \bfseries 15.988 \\
+0.01 & 3.394 & 4.270 & 6.585 & 4.061 & 3.724 & 7.739 & 18.519 \\
+0.03 & 3.174 & 3.996 & 5.994 & 3.653 & 3.321 & 7.105 & 18.310 \\
+0.10 & \bfseries 3.073 & \bfseries 3.899 & \bfseries 5.838
+& \bfseries 3.605 & \bfseries 3.226 & \bfseries 7.062 & 17.142 \\
+\bottomrule
+\end{tabular}}
+\end{table}
+
+Per la modalità sparse il comportamento è più netto: aumentando il peso fino
+a 0.1 migliorano tutte le statistiche aggregate. Rispetto a $\lambda=0$, la
+TRE media migliora di circa il 33.7\%, la mediana del 37.4\% e il $p_{95}$ del
+26.0\%. Il massimo resta leggermente peggiore del modello senza KL, ma 0.1 è
+anche il migliore tra tutti i modelli supervisionati nelle code.
+
+Le configurazioni provvisoriamente selezionate sono quindi:
+
+\begin{itemize}
+    \item sweep: $\lambda_{corr}=0.03$;
+    \item sparse: $\lambda_{corr}=0.10$.
+\end{itemize}
+
+\subsection{Confronto con la baseline a quattro punti}
+
+Sul development set seed 44, la baseline presenta una TRE media di circa
+\SI{0.40}{\milli\metre} in entrambe le modalità. Tale risultato è coerente con
+il vantaggio di conoscere quattro corrispondenze esatte e ben distribuite. Il
+confronto sintetico corrente è riassunto in Tabella~\ref{tab:best-dev}.
+
+\begin{table}[ht]
+\centering
+\caption{Migliori configurazioni correnti sul development set seed 44.}
+\label{tab:best-dev}
+\begin{tabular}{llrrrr}
+\toprule
+Modalità & Metodo & Rot. [deg] & Trasl. [mm] & TRE [mm] & TRE $p_{95}$ [mm] \\
+\midrule
+Sweep & DCP, $\lambda=0.03$ & 7.631 & 12.504 & 12.761 & 24.660 \\
+Sweep & Baseline 4 punti & 0.435 & 0.561 & 0.401 & 0.792 \\
+Sparse & DCP, $\lambda=0.10$ & 3.073 & 3.899 & 3.605 & 7.062 \\
+Sparse & Baseline 4 punti & 0.434 & 0.564 & 0.401 & 0.795 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+La baseline è dunque ancora nettamente più accurata. Tuttavia i due metodi non
+richiedono lo stesso intervento: la baseline usa soltanto quattro punti ma con
+identità e ordine noti; DCP usa punti arbitrari e non ordinati. Il risultato va
+presentato senza sostenere che DCP abbia già sostituito la baseline in termini
+di accuratezza. Il contributo attuale è la rimozione dei vincoli di
+acquisizione, con un costo ancora significativo in TRE.
+
+\subsection{Perché sparse è attualmente migliore di sweep}
+
+A prima vista può sembrare sorprendente che 25 punti sparse superino uno sweep
+di 512 punti. Nel generatore corrente, però, i punti sparse sono distribuiti
+sull'intera superficie, mentre lo sweep occupa una singola patch locale. Una
+patch della scocca può essere liscia, quasi simmetrica o geometricamente poco
+distintiva. Molti punti nella stessa zona non aggiungono necessariamente
+informazione globale. Pochi punti distanti tra loro possono invece vincolare
+meglio rotazione e traslazione.
+
+Questa osservazione ha motivato l'ablation attualmente in esecuzione su:
+
+\begin{itemize}
+    \item raggio dello sweep: 20, 40 e \SI{60}{\milli\metre};
+    \item numero di punti sparse: 20, 25, 35 e 50;
+    \item confronto, per ogni acquisizione, tra pose loss standard e migliore
+    loss geometrica selezionata per la modalità.
+\end{itemize}
+
+\todo{Inserire qui la tabella dell'ablation di acquisizione al termine del
+training \code{acq_sweep_r40_dcp_seed42} e degli esperimenti successivi. Non
+selezionare il protocollo finale prima di aver confrontato tutti i risultati
+sullo stesso development seed.}
+
+\section{Problemi incontrati e conseguenze}
+
+\begin{longtable}{p{0.23\textwidth}p{0.34\textwidth}p{0.34\textwidth}}
+\caption{Principali problemi tecnici e metodologici affrontati.}\\
+\toprule
+Problema & Correzione & Conseguenza \\
+\midrule
+\endfirsthead
+\toprule
+Problema & Correzione & Conseguenza \\
+\midrule
+\endhead
+Percorso STL errato & Individuazione dei file reali in
+\code{ModelloPhantom} e uso di percorsi quotati & Pipeline eseguibile su
+Windows e Linux; scelta esplicita della mesh. \\
+
+Baseline con vertici casuali & Attesa delle coordinate ufficiali e
+implementazione del metodo SVD dei docenti & Confronto difendibile e coerente
+con il sistema esistente. \\
+
+Source e target identici & Permutazioni, campionamenti indipendenti e infine
+target globale FPS & Eliminazione delle corrispondenze implicite; problema più
+realistico ma più difficile. \\
+
+Metriche pointwise non valide & Confronto tra trasformazione predetta e GT
+applicate agli stessi punti & MSE e MAE invarianti all'ordine. \\
+
+Cardinalità source/target diverse & Matrice di attenzione $N_s\times N_t$ e
+target virtuali source-to-target & Supporto per 25/512 punti contro 1024. \\
+
+Gap train/eval con batch piccoli & BatchNorm sostituita da GroupNorm &
+Comportamento più stabile e checkpoint più affidabili. \\
+
+Digital twin ricampionato & Target FPS fisso salvato nel checkpoint &
+Riproducibilità tra training, validation e test. \\
+
+Unità mm / unità rete & Normalizzazione unica e conversione esplicita in
+evaluation & Errori fisici interpretabili e riduzione dei rischi di fattori
+100 o 1000. \\
+
+Attenzione non supervisionata & KL geometrica con etichette soft & Grande
+miglioramento sparse; peso da calibrare nello sweep. \\
+
+Esperimenti sovrascrivibili & Blocco su directory esistenti, backup sorgenti,
+checkpoint best/last & Maggiore tracciabilità; le cartelle incomplete devono
+essere riprese o archiviate esplicitamente. \\
+\bottomrule
+\end{longtable}
+
+\section{Validazione sperimentale ancora necessaria}
+
+Prima di considerare chiusa la parte sperimentale sono previste le seguenti
+attività.
+
+\subsection{Ablation dell'acquisizione}
+
+L'esperimento in corso deve determinare se le prestazioni cambiano con una
+patch sweep più estesa e con un numero maggiore di punti sparse. I parametri
+devono essere scelti sul development set, non sul test finale.
+
+\subsection{Ripetizione su più seed di training}
+
+Una sola inizializzazione non consente di distinguere una scelta robusta da un
+risultato fortunato. Dopo aver fissato raggio e numero di punti, le quattro
+configurazioni principali dovranno essere ripetute con almeno tre seed di
+training:
+
+\begin{itemize}
+    \item sweep senza loss geometrica;
+    \item sweep con $\lambda_{corr}=0.03$;
+    \item sparse senza loss geometrica;
+    \item sparse con $\lambda_{corr}=0.10$.
+\end{itemize}
+
+La relazione finale dovrà riportare media e deviazione tra seed, oltre alle
+statistiche per campione.
+
+\subsection{Test finale held-out}
+
+Il seed finale deve rimanere inutilizzato durante le scelte progettuali. La
+procedura proposta usa:
+
+\begin{itemize}
+    \item seed 44 per sviluppo e ablation;
+    \item seed di training distinti, ad esempio 42, 123 e 777;
+    \item seed 314159 per la sola valutazione finale.
+\end{itemize}
+
+\subsection{Bacino di convergenza e success rate}
+
+La traccia richiede di studiare il disallineamento iniziale entro il quale il
+metodo converge. Occorre valutare più livelli di rotazione e traslazione, ad
+esempio aumentando separatamente i limiti, e definire prima dell'esperimento
+una soglia di successo basata sulla TRE. Un esempio da discutere è
+$\mathrm{TRE}<\SI{5}{\milli\metre}$, ma la soglia finale dovrebbe essere
+motivata clinicamente o concordata con la docente.
+
+\subsection{Robustezza al rumore}
+
+È opportuno confrontare almeno $\sigma=0$, 0.3 e
+\SI{0.6}{\milli\metre}. Questo permette di separare l'errore dovuto
+all'ambiguità geometrica da quello dovuto al tracker.
+
+\subsection{Reality check con Polaris}
+
+Il limite principale è l'assenza, al momento, di una piccola acquisizione
+reale sul phantom. La traccia richiede un controllo finale con Polaris. I
+risultati sintetici non dimostrano da soli la generalizzazione a errori reali
+di calibrazione, contatto, occlusione e campionamento manuale.
+
+\section{Struttura del codice}
+
+\begin{description}
+    \item[\code{phantom_data.py}] Caricamento mesh, validazione, campionamento
+    uniforme, grafo delle facce, patch sweep, FPS, trasformazioni casuali e
+    dataset partial-to-global.
+    \item[\code{model.py}] DGCNN/PointNet, Transformer, testa SVD e modello
+    DCP. Contiene GroupNorm e supporto opzionale alla restituzione dei logits
+    di corrispondenza.
+    \item[\code{correspondence_loss.py}] Costruzione delle etichette
+    geometriche soft e KL $D_{KL}(q\|p)$.
+    \item[\code{train.py}] Training e validation, loss di posa/ciclo/KL,
+    checkpoint, backup dei sorgenti, resume/pretrained, logging e TensorBoard.
+    \item[\code{evaluate.py}] Ricostruzione della configurazione dal
+    checkpoint, metriche fisiche, TRE, baseline ufficiale e riepilogo
+    statistico.
+    \item[\code{test_correspondence.py}] Otto test automatici della pipeline.
+    \item[\code{util.py}] Trasformazioni di point cloud e conversioni di
+    rotazione.
+\end{description}
+
+\section{Conclusioni provvisorie}
+
+Il progetto ha raggiunto una pipeline completa e verificata per la
+registrazione sintetica partial-to-global del phantom cervicale. Il progresso
+più rilevante non è un singolo valore di loss, ma il passaggio da un test
+iniziale con corrispondenze implicite a un protocollo realistico, non ordinato,
+con overlap parziale, digital twin globale fisso, baseline ufficiale e TRE
+anatomica.
+
+I risultati attuali supportano tre conclusioni:
+
+\begin{enumerate}
+    \item la supervisione geometrica delle corrispondenze è utile, soprattutto
+    nella modalità sparse;
+    \item uno sweep locale molto denso può essere meno informativo di pochi
+    punti distribuiti globalmente;
+    \item la baseline a quattro landmark rimane molto più accurata, ma paga
+    tale accuratezza con corrispondenze e ordine prescritti.
+\end{enumerate}
+
+Il progetto non deve quindi essere presentato come una vittoria numerica di
+DCP sulla baseline. La domanda scientifica corretta è quanto errore si accetta
+per eliminare la procedura vincolata dei quattro landmark e quali modalità di
+acquisizione rendono questo compromesso più favorevole. Le prossime ablation,
+la valutazione multi-seed e il reality check Polaris serviranno a rispondere in
+modo più solido.
+
+\appendix
+
+\section{Cronologia sintetica}
+
+\begin{longtable}{p{0.17\textwidth}p{0.75\textwidth}}
+\toprule
+Fase & Attività principale \\
+\midrule
+\endhead
+Analisi & Studio della traccia, DCP, soluzione SVD e componenti STL. \\
+Dataset V1 & Generazione di coppie sintetiche da mesh; verifica di frame,
+scala e rumore. \\
+Debug & Overfitting su pochi campioni e controllo che la SVD fosse
+differenziabile e stabile. \\
+Unordered & Permutazione dei punti e correzione delle metriche non invarianti
+all'ordine. \\
+Independent & Rimozione del riuso delle stesse coordinate tra point set. \\
+Partial-to-global & Source parziale contro digital twin globale FPS da 1024
+punti. \\
+Stabilità & GroupNorm, gradient clipping e controlli sui valori non finiti. \\
+Baseline & Inserimento dei quattro landmark ufficiali e SVD classica. \\
+TRE & Inserimento dei target, metriche per target e test matematici. \\
+Supervisione & Loss KL geometrica sulle corrispondenze source-to-target. \\
+Ablation loss & Confronto $\lambda\in\{0,0.01,0.03,0.10\}$ sul seed 44. \\
+Ablation acquisizione & Confronto in corso di raggi sweep e cardinalità sparse. \\
+Fase finale & Multi-seed, robustezza, basin of attraction, success rate e dati
+Polaris reali. \\
+\bottomrule
+\end{longtable}
+
+\section{Esempio di comando riproducibile}
+
+Il seguente comando mostra la configurazione base di un training sweep con
+supervisione geometrica. I valori definitivi di raggio e peso dovranno essere
+aggiornati dopo le ablation.
+
+\begin{lstlisting}[language=bash]
+python train.py \
+  --stl phantom_surface.stl \
+  --exp_name sweep_corr003_seed42 \
+  --emb_nn dgcnn --pointer transformer --head svd \
+  --emb_dims 512 --ff_dims 1024 \
+  --n_blocks 1 --n_heads 4 --dgcnn_k 20 \
+  --batch_size 2 --epochs 50 --scheduler 25 \
+  --lr 0.001 --grad_clip 1 \
+  --dset_mode sweep \
+  --dset_num_samples 5000 --val_num_samples 500 \
+  --dset_n_points 512 --target_n_points 1024 \
+  --dset_rot_max 0.17 --dset_trans_max 10 \
+  --noise_sigma 0.3 --network_scale_mm 100 \
+  --patch_radius_mm 20 --manualSeed 42 \
+  --num_workers 4 --corr_weight 0.03 \
+  --corr_sigma_mm 5
+\end{lstlisting}
+
+\begin{thebibliography}{9}
+
+\bibitem{arun1987}
+K. S. Arun, T. S. Huang, S. D. Blostein,
+``Least-Squares Fitting of Two 3-D Point Sets,''
+\emph{IEEE Transactions on Pattern Analysis and Machine Intelligence},
+vol. PAMI-9, no. 5, 1987.
+
+\bibitem{wang2019dcp}
+Y. Wang, J. M. Solomon,
+``Deep Closest Point: Learning Representations for Point Cloud Registration,''
+\emph{Proceedings of ICCV}, 2019.
+
+\bibitem{besl1992}
+P. J. Besl, N. D. McKay,
+``A Method for Registration of 3-D Shapes,''
+\emph{IEEE Transactions on Pattern Analysis and Machine Intelligence},
+vol. 14, no. 2, 1992.
+
+\end{thebibliography}
+
+\end{document}
