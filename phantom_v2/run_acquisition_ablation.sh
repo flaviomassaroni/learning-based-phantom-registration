@@ -156,6 +156,6 @@ do
     echo
     echo "--- $log"
     grep -E \
-        "Training corr_weight|Mode:|dcp_rotation_deg:|dcp_translation_mm:|dcp_source_proxy_mm:|dcp_tcp_tre_mean_mm:" \
+        "Training corr_weight|Mode:|dcp_rotation_deg:|dcp_translation_mm:|dcp_source_proxy_mm:|dcp_tre_mean_mm:" \
         "$log"
 done

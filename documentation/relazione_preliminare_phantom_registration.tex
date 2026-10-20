@@ -641,19 +641,76 @@ distintiva. Molti punti nella stessa zona non aggiungono necessariamente
 informazione globale. Pochi punti distanti tra loro possono invece vincolare
 meglio rotazione e traslazione.
 
-Questa osservazione ha motivato l'ablation attualmente in esecuzione su:
+Questa osservazione ha motivato una seconda ablation, sullo stesso
+development set (seed 44, 2000 campioni), che varia il raggio dello sweep
+(20, 40, \SI{60}{\milli\metre}) e il numero di punti sparse (20, 25, 35, 50),
+confrontando per ciascuna acquisizione la sola pose loss con la migliore
+loss geometrica della modalità.
 
-\begin{itemize}
-    \item raggio dello sweep: 20, 40 e \SI{60}{\milli\metre};
-    \item numero di punti sparse: 20, 25, 35 e 50;
-    \item confronto, per ogni acquisizione, tra pose loss standard e migliore
-    loss geometrica selezionata per la modalità.
-\end{itemize}
+\begin{table}[ht]
+\centering
+\caption{Ablation dell'acquisizione, development seed 44. TRE in millimetri.}
+\label{tab:acq}
+\begin{tabular}{llrrrr}
+\toprule
+Modalità & Acquisizione & \multicolumn{2}{c}{Solo pose loss} & \multicolumn{2}{c}{Pose + KL} \\
+ & & TRE media & TRE $p_{95}$ & TRE media & TRE $p_{95}$ \\
+\midrule
+Sweep ($\lambda=0.03$) & $r=\SI{20}{\milli\metre}$ & 14.028 & 24.843 & 12.761 & 24.660 \\
+ & $r=\SI{40}{\milli\metre}$ & 11.868 & 21.297 & 9.126 & 18.190 \\
+ & $r=\SI{60}{\milli\metre}$ & 8.213 & 15.454 & \bfseries 6.055 & \bfseries 12.659 \\
+\midrule
+Sparse ($\lambda=0.10$) & 20 punti & 5.970 & 10.429 & 4.151 & 8.065 \\
+ & 25 punti & 5.440 & 9.539 & 3.605 & 7.062 \\
+ & 35 punti & 4.587 & 8.021 & 2.753 & 5.171 \\
+ & 50 punti & 3.704 & 6.506 & \bfseries 1.784 & \bfseries 3.476 \\
+\bottomrule
+\end{tabular}
+\end{table}
 
-\todo{Inserire qui la tabella dell'ablation di acquisizione al termine del
-training \code{acq_sweep_r40_dcp_seed42} e degli esperimenti successivi. Non
-selezionare il protocollo finale prima di aver confrontato tutti i risultati
-sullo stesso development seed.}
+In entrambe le modalità l'errore diminuisce in modo monotono con la quantità
+di superficie osservata e la loss geometrica migliora ogni configurazione.
+Allargare lo sweep da 20 a \SI{60}{\milli\metre} riduce la TRE media del 53\%
+(con KL); passare da 20 a 50 punti sparse la riduce del 57\%. La
+configurazione sparse a 50 punti con KL è la migliore in assoluto
+(\SI{1.78}{\milli\metre} di TRE media), ma resta circa quattro volte la
+baseline (\SI{0.40}{\milli\metre}). Le configurazioni selezionate per i test
+finali sono quindi sweep $r=\SI{60}{\milli\metre}$, $\lambda=0.03$ e sparse
+50 punti, $\lambda=0.10$, ciascuna confrontata con la propria versione senza
+loss geometrica.
+
+\section{Test finali}
+
+I test finali usano esclusivamente i modelli già selezionati sul development
+set e un seed mai usato nelle scelte progettuali (314159). Sono eseguiti da
+\code{run_final_tests.sh} e riassunti da \code{summarize_final_tests.py}, che
+produce \code{final_tests_summary.md} e le figure del bacino di convergenza e
+dei casi peggiori. Una registrazione è considerata riuscita se la TRE media
+del campione è inferiore a \SI{5}{\milli\metre}; la soglia è fissata prima
+dell'esperimento.
+
+\begin{description}
+    \item[Test held-out.] 2000 campioni per ciascuna delle quattro
+    configurazioni (sweep e sparse, con e senza KL) e per la baseline, nelle
+    stesse condizioni del training ($\pm\SI{0.17}{rad}$,
+    $\pm\SI{10}{\milli\metre}$, $\sigma=\SI{0.3}{\milli\metre}$). Fornisce la
+    tabella finale $\{\text{sweep},\text{sparse}\}\times\{\text{DCP},
+    \text{baseline}\}$ richiesta dalla traccia.
+    \item[Bacino di convergenza.] Disallineamento iniziale crescente,
+    $\pm10\degree/\SI{10}{\milli\metre}$, $\pm20\degree/\SI{20}{\milli\metre}$,
+    $\pm30\degree/\SI{30}{\milli\metre}$ e $\pm45\degree/\SI{50}{\milli\metre}$
+    per asse, con i modelli addestrati soltanto sul primo livello. Il primo
+    livello in cui il success rate crolla delimita il bacino.
+    \item[Rumore.] $\sigma=0$, 0.3 e \SI{0.6}{\milli\metre} per separare
+    l'ambiguità geometrica dall'errore del tracker.
+    \item[Casi di fallimento.] Per ogni valutazione vengono salvati le
+    metriche per campione e i cinque campioni peggiori, visualizzati come
+    source allineato con la posa vera e con quella predetta.
+\end{description}
+
+\todo{Inserire le tabelle di \code{final_tests_summary.md} e le figure
+\code{final_tests_basin.png} e \code{final_tests_failures.png} dopo
+l'esecuzione di \code{run_final_tests.sh} sulla macchina GPU.}
 
 \section{Problemi incontrati e conseguenze}
 
@@ -706,14 +763,9 @@ essere riprese o archiviate esplicitamente. \\
 
 \section{Validazione sperimentale ancora necessaria}
 
-Prima di considerare chiusa la parte sperimentale sono previste le seguenti
-attività.
-
-\subsection{Ablation dell'acquisizione}
-
-L'esperimento in corso deve determinare se le prestazioni cambiano con una
-patch sweep più estesa e con un numero maggiore di punti sparse. I parametri
-devono essere scelti sul development set, non sul test finale.
+Ablation, test held-out, bacino di convergenza e robustezza al rumore sono
+coperti dalle sezioni precedenti. Prima di considerare chiusa la parte
+sperimentale restano le seguenti attività.
 
 \subsection{Ripetizione su più seed di training}
 
@@ -731,32 +783,6 @@ training:
 
 La relazione finale dovrà riportare media e deviazione tra seed, oltre alle
 statistiche per campione.
-
-\subsection{Test finale held-out}
-
-Il seed finale deve rimanere inutilizzato durante le scelte progettuali. La
-procedura proposta usa:
-
-\begin{itemize}
-    \item seed 44 per sviluppo e ablation;
-    \item seed di training distinti, ad esempio 42, 123 e 777;
-    \item seed 314159 per la sola valutazione finale.
-\end{itemize}
-
-\subsection{Bacino di convergenza e success rate}
-
-La traccia richiede di studiare il disallineamento iniziale entro il quale il
-metodo converge. Occorre valutare più livelli di rotazione e traslazione, ad
-esempio aumentando separatamente i limiti, e definire prima dell'esperimento
-una soglia di successo basata sulla TRE. Un esempio da discutere è
-$\mathrm{TRE}<\SI{5}{\milli\metre}$, ma la soglia finale dovrebbe essere
-motivata clinicamente o concordata con la docente.
-
-\subsection{Robustezza al rumore}
-
-È opportuno confrontare almeno $\sigma=0$, 0.3 e
-\SI{0.6}{\milli\metre}. Questo permette di separare l'errore dovuto
-all'ambiguità geometrica da quello dovuto al tracker.
 
 \subsection{Reality check con Polaris}
 
@@ -780,8 +806,10 @@ di calibrazione, contatto, occlusione e campionamento manuale.
     checkpoint, backup dei sorgenti, resume/pretrained, logging e TensorBoard.
     \item[\code{evaluate.py}] Ricostruzione della configurazione dal
     checkpoint, metriche fisiche, TRE, baseline ufficiale e riepilogo
-    statistico.
+    statistico, success rate, metriche per campione e casi peggiori.
     \item[\code{test_correspondence.py}] Otto test automatici della pipeline.
+    \item[\code{run_final_tests.sh}, \code{summarize_final_tests.py}] Test
+    held-out, bacino di convergenza, rumore, success rate e casi peggiori.
     \item[\code{util.py}] Trasformazioni di point cloud e conversioni di
     rotazione.
 \end{description}
@@ -809,7 +837,7 @@ I risultati attuali supportano tre conclusioni:
 Il progetto non deve quindi essere presentato come una vittoria numerica di
 DCP sulla baseline. La domanda scientifica corretta è quanto errore si accetta
 per eliminare la procedura vincolata dei quattro landmark e quali modalità di
-acquisizione rendono questo compromesso più favorevole. Le prossime ablation,
+acquisizione rendono questo compromesso più favorevole. I test finali,
 la valutazione multi-seed e il reality check Polaris serviranno a rispondere in
 modo più solido.
 
@@ -837,7 +865,8 @@ Baseline & Inserimento dei quattro landmark ufficiali e SVD classica. \\
 TRE & Inserimento dei target, metriche per target e test matematici. \\
 Supervisione & Loss KL geometrica sulle corrispondenze source-to-target. \\
 Ablation loss & Confronto $\lambda\in\{0,0.01,0.03,0.10\}$ sul seed 44. \\
-Ablation acquisizione & Confronto in corso di raggi sweep e cardinalità sparse. \\
+Ablation acquisizione & Raggi sweep 20--60 mm e 20--50 punti sparse, con e senza KL. \\
+Test finali & Held-out seed 314159, bacino di convergenza, rumore e casi di fallimento. \\
 Fase finale & Multi-seed, robustezza, basin of attraction, success rate e dati
 Polaris reali. \\
 \bottomrule

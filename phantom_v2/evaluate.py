@@ -441,6 +441,22 @@ def evaluate(args):
             "noise_sigma deve essere finito e non negativo."
         )
 
+    # Disallineamento iniziale: default dal training,
+    # sovrascrivibile per lo studio del bacino di convergenza.
+    rot_max = (
+        args.rot_max
+        if args.rot_max is not None
+        else float(config.get('dset_rot_max', np.pi / 4))
+    )
+    trans_max = (
+        args.trans_max
+        if args.trans_max is not None
+        else float(config.get('dset_trans_max', 50.0))
+    )
+
+    if args.success_tre_mm <= 0:
+        raise ValueError("success_tre_mm deve essere positivo.")
+
     stl_path = (
         args.stl
         or config.get('stl')
@@ -458,12 +474,8 @@ def evaluate(args):
         num_samples=args.num_eval,
         n_points=n_points,
         target_n_points=target_n_points,
-        rot_max=float(
-            config.get('dset_rot_max', np.pi / 4)
-        ),
-        trans_max=float(
-            config.get('dset_trans_max', 50.0)
-        ),
+        rot_max=rot_max,
+        trans_max=trans_max,
         noise_sigma=noise_sigma,
         seed=seed,
         network_scale_mm=scale,
@@ -551,6 +563,9 @@ def evaluate(args):
     )
 
     metrics = {}
+    # Una riga per campione, nello stesso ordine del dataset
+    # (shuffle=False): l'indice permette di rigenerare il campione.
+    per_sample = []
 
     def record(name, value):
         value = float(value)
@@ -615,12 +630,20 @@ def evaluate(args):
                     ).mean(),
                 )
 
+                row = {
+                    'index': len(per_sample),
+                    'dcp_rotation_deg': metrics['dcp_rotation_deg'][-1],
+                    'dcp_translation_mm': metrics['dcp_translation_mm'][-1],
+                }
+                per_sample.append(row)
+
                 if has_targets:
                     errors = compute_tre(
                         R_p, t_p, R_g, t_g, targets
                     )
 
                     record('dcp_tre_mean_mm', errors.mean())
+                    row['dcp_tre_mean_mm'] = float(errors.mean())
 
                     for j, error in enumerate(errors):
                         record(
@@ -667,6 +690,7 @@ def evaluate(args):
                             'baseline_tre_mean_mm',
                             errors.mean(),
                         )
+                        row['baseline_tre_mean_mm'] = float(errors.mean())
 
                         for j, error in enumerate(errors):
                             record(
@@ -678,6 +702,39 @@ def evaluate(args):
         'checkpoints', args.exp_name
     )
     os.makedirs(log_dir, exist_ok=True)
+
+    worst = []
+
+    if has_targets and per_sample:
+        worst = sorted(
+            per_sample,
+            key=lambda r: r['dcp_tre_mean_mm'],
+            reverse=True,
+        )[:args.num_worst]
+
+        # Il dataset è deterministico per indice: i casi peggiori
+        # vengono rigenerati e salvati in mm per l'analisi dei fallimenti.
+        cases = {}
+
+        with torch.no_grad():
+            for k, r in enumerate(worst):
+                src, tgt, R_gt, t_gt = (
+                    torch.as_tensor(x) for x in dataset[r['index']]
+                )
+                R_p, t_p, _, _ = net(
+                    src.unsqueeze(0).to(device),
+                    tgt.unsqueeze(0).to(device),
+                )
+                cases[f'case{k}_index'] = np.array(r['index'])
+                cases[f'case{k}_src_mm'] = src.numpy().T * scale
+                cases[f'case{k}_tgt_mm'] = tgt.numpy().T * scale
+                cases[f'case{k}_R_gt'] = R_gt.numpy()
+                cases[f'case{k}_t_gt_mm'] = t_gt.numpy() * scale
+                cases[f'case{k}_R_pred'] = R_p[0].cpu().numpy()
+                cases[f'case{k}_t_pred_mm'] = t_p[0].cpu().numpy() * scale
+                cases[f'case{k}_tre_mm'] = np.array(r['dcp_tre_mean_mm'])
+
+        np.savez(os.path.join(log_dir, 'worst_cases.npz'), **cases)
 
     textio = IOStream(
         os.path.join(log_dir, 'eval.log')
@@ -756,6 +813,46 @@ def evaluate(args):
                 f"max={stats['max']:.6f}"
             )
 
+        if has_targets:
+            # Registrazione riuscita: TRE media del campione
+            # sotto una soglia fissata prima dell'esperimento.
+            for method in ('dcp', 'baseline'):
+                key = f'{method}_tre_mean_mm'
+
+                if key not in metrics:
+                    continue
+
+                rate = float(
+                    (np.asarray(metrics[key]) < args.success_tre_mm).mean()
+                )
+                summary[f'{method}_success_rate'] = rate
+                textio.cprint(
+                    f"{method}_success_rate "
+                    f"(TRE < {args.success_tre_mm} mm): "
+                    f"{100.0 * rate:.2f}%"
+                )
+
+            textio.cprint("Casi peggiori DCP (indice campione, TRE, rot, trasl):")
+
+            for r in worst:
+                textio.cprint(
+                    f"  idx={r['index']}: "
+                    f"TRE={r['dcp_tre_mean_mm']:.3f} mm, "
+                    f"rot={r['dcp_rotation_deg']:.3f} deg, "
+                    f"trasl={r['dcp_translation_mm']:.3f} mm"
+                )
+
+        csv_path = os.path.join(log_dir, 'per_sample.csv')
+        columns = list(per_sample[0].keys()) if per_sample else []
+
+        with open(csv_path, 'w') as f:
+            f.write(','.join(columns) + '\n')
+
+            for r in per_sample:
+                f.write(','.join(str(r[c]) for c in columns) + '\n')
+
+        textio.cprint(f"Metriche per campione: {csv_path}")
+
     finally:
         textio.close()
 
@@ -823,6 +920,36 @@ def main():
         type=int,
         default=None,
         help='Default: seed del training + 2',
+    )
+    parser.add_argument(
+        '--rot_max',
+        type=float,
+        default=None,
+        help=(
+            'Rotazione massima per asse in rad; '
+            'default dal training (bacino di convergenza)'
+        ),
+    )
+    parser.add_argument(
+        '--trans_max',
+        type=float,
+        default=None,
+        help=(
+            'Traslazione massima per asse in mm; '
+            'default dal training (bacino di convergenza)'
+        ),
+    )
+    parser.add_argument(
+        '--success_tre_mm',
+        type=float,
+        default=5.0,
+        help='Soglia di TRE media per una registrazione riuscita',
+    )
+    parser.add_argument(
+        '--num_worst',
+        type=int,
+        default=5,
+        help='Numero di casi peggiori riportati nel log',
     )
     parser.add_argument(
         '--exp_name',

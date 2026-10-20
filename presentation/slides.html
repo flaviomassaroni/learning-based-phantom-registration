@@ -1,0 +1,564 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<title>Registrazione phantom cervicale</title>
+<style>
+  @page { size: 1280px 720px; margin: 0; }
+  :root {
+    --bg: #fcfcfb; --ink: #0b0b0b; --ink2: #52514e; --muted: #8a8984; --line: #e4e3df;
+    --accent: #2a78d6; --accent-soft: #eaf2fc; --orange: #eb6834; --orange-soft: #fdeee7;
+    --warn-soft: #fff6e0; --good: #1baf7a;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink);
+    font-family: "DejaVu Sans", "Helvetica Neue", Arial, sans-serif; }
+  .slide { width: 1280px; height: 720px; padding: 48px 64px 40px; position: relative;
+    page-break-after: always; overflow: hidden; display: flex; flex-direction: column; background: var(--bg); }
+  .slide:last-child { page-break-after: auto; }
+  .kicker { font-size: 15px; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); font-weight: 700; margin-bottom: 6px; }
+  h1 { font-size: 36px; margin: 0 0 22px; line-height: 1.15; }
+  h2 { font-size: 21px; margin: 0 0 10px; }
+  p, li { font-size: 19px; line-height: 1.45; color: var(--ink); }
+  p { margin: 0 0 12px; }
+  ul, ol { margin: 0 0 10px; padding-left: 24px; }
+  li { margin-bottom: 6px; }
+  .muted { color: var(--ink2); }
+  .small, .small li { font-size: 16px; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 36px; flex: 1; min-height: 0; }
+  .cols.wide-left { grid-template-columns: 1.35fr 1fr; }
+  .cols.wide-right { grid-template-columns: 1fr 1.35fr; }
+  .cols3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; }
+  .card { border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; background: #fff; }
+  .card h2 { font-size: 19px; }
+  .card p, .card li { font-size: 16.5px; }
+  .card.hl { border-color: var(--accent); background: var(--accent-soft); }
+  .lesson { margin-top: auto; border-left: 5px solid var(--orange); background: var(--orange-soft);
+    padding: 12px 18px; border-radius: 0 8px 8px 0; font-size: 18px; }
+  .lesson b { color: #b2441a; }
+  .note { border-left: 5px solid var(--accent); background: var(--accent-soft); padding: 12px 18px; border-radius: 0 8px 8px 0; font-size: 18px; }
+  .formula { font-family: "DejaVu Serif", Georgia, serif; font-size: 22px; text-align: center; margin: 10px 0 16px;
+    padding: 12px; background: #f4f3ef; border-radius: 8px; }
+  .formula.sm { font-size: 18px; }
+  table { border-collapse: collapse; width: 100%; font-size: 16px; }
+  th { text-align: left; color: var(--ink2); font-weight: 600; border-bottom: 2px solid var(--ink2); padding: 6px 8px; }
+  td { border-bottom: 1px solid var(--line); padding: 6px 8px; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tr.best td { background: var(--accent-soft); font-weight: 700; }
+  img { max-width: 100%; display: block; }
+  .fig { display: flex; align-items: center; justify-content: center; min-height: 0; }
+  .fig img { max-height: 100%; object-fit: contain; }
+  .footer { position: absolute; bottom: 14px; left: 64px; right: 64px; display: flex; justify-content: space-between;
+    font-size: 12px; color: var(--muted); }
+  .step { display: inline-block; background: var(--accent); color: #fff; font-weight: 700; border-radius: 6px;
+    padding: 2px 10px; font-size: 15px; margin-right: 8px; }
+  code { font-family: "DejaVu Sans Mono", monospace; font-size: .88em; background: #f0efea; padding: 1px 5px; border-radius: 4px; }
+  /* pipeline */
+  .pipe { display: flex; align-items: stretch; gap: 10px; margin: 6px 0 18px; }
+  .pipe .blk { flex: 1; border: 2px solid var(--accent); border-radius: 10px; padding: 12px; text-align: center; background: #fff; }
+  .pipe .blk b { display: block; font-size: 18px; margin-bottom: 4px; }
+  .pipe .blk span { font-size: 14.5px; color: var(--ink2); }
+  .pipe .arr { align-self: center; font-size: 26px; color: var(--muted); }
+  .pipe .blk.in { border-color: var(--muted); }
+  .pipe .blk.out { border-color: var(--orange); }
+  /* timeline */
+  .tl { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; }
+  .tl .t { border-top: 5px solid var(--accent); padding-top: 10px; }
+  .tl .t .n { font-size: 14px; color: var(--accent); font-weight: 700; }
+  .tl .t b { display: block; font-size: 17px; margin: 2px 0 4px; }
+  .tl .t span { font-size: 14.5px; color: var(--ink2); line-height: 1.35; display: block; }
+  .tl .t.res { border-top-color: var(--orange); }
+  .tl .t.res .n { color: var(--orange); }
+  /* title */
+  .title { justify-content: center; padding-left: 96px; }
+  .title h1 { font-size: 46px; margin-bottom: 14px; }
+  .title .sub { font-size: 23px; color: var(--ink2); margin-bottom: 40px; }
+  .title .meta { font-size: 18px; color: var(--ink2); line-height: 1.6; }
+  .title .bar { width: 90px; height: 6px; background: var(--accent); border-radius: 3px; margin-bottom: 26px; }
+  .big { font-size: 44px; font-weight: 700; color: var(--accent); line-height: 1; }
+  .big.o { color: var(--orange); }
+  .big.g { color: var(--muted); }
+  .stat { font-size: 15px; color: var(--ink2); margin-top: 4px; }
+</style>
+</head>
+<body>
+
+<!-- 1 TITOLO -->
+<section class="slide title">
+  <div class="bar"></div>
+  <div class="kicker">Medical Robotics · Progetto di fine corso · A.A. 2025/2026</div>
+  <h1>Registrazione learning-based<br>del phantom cervicale</h1>
+  <div class="sub">senza punti fiduciali prescritti — Deep Closest Point (variante V2)</div>
+  <div class="meta">Flavio Massaroni · Giovanni Contursi<br>
+    <span class="muted">Repository: flaviomassaroni/learning-based-phantom-registration</span></div>
+</section>
+
+<!-- 2 CONTESTO -->
+<section class="slide">
+  <div class="kicker">1 · Contesto</div>
+  <h1>Il punto di partenza: registrazione a 4 landmark</h1>
+  <div class="cols wide-left">
+    <div>
+      <ul>
+        <li>Phantom fisico del distretto cervicale + <b>digital twin</b> (mesh triangolare, ≈173k vertici).</li>
+        <li>Tracker ottico <b>NDI Polaris Vega XT</b> con puntatore calibrato (pivot).</li>
+        <li>Metodo attuale: si toccano <b>4 punti noti</b> in un <b>ordine prestabilito</b> → trasformazione rigida in forma chiusa (SVD / Procrustes).</li>
+      </ul>
+      <div class="note" style="margin-top:14px"><b>Obiettivo del progetto:</b> stesso hardware, ma l'operatore acquisisce un insieme di punti <b>parziale e non ordinato</b>; una rete stima la stessa trasformazione Polaris → phantom.</div>
+      <div class="formula">x<sub>phantom</sub> = R · x<sub>Polaris</sub> + t, &nbsp; R ∈ SO(3), t ∈ ℝ³</div>
+    </div>
+    <div class="fig"><img src="figures/phantom_landmarks.png" alt="Phantom con landmark e target TRE"></div>
+  </div>
+  <div class="footer"><span>Registrazione learning-based del phantom cervicale</span><span>2</span></div>
+</section>
+
+<!-- 3 TEORIA SVD -->
+<section class="slide">
+  <div class="kicker">2 · Fondamenti teorici</div>
+  <h1>Registrazione rigida con corrispondenze note (Arun, 1987)</h1>
+  <div class="cols">
+    <div>
+      <div class="formula">min<sub>R,t</sub> Σ<sub>i</sub> ‖ y<sub>i</sub> − (R x<sub>i</sub> + t) ‖²</div>
+      <ol>
+        <li>Si sottraggono i baricentri x̄, ȳ (disaccoppia R e t).</li>
+        <li>Matrice di covarianza <b>H = Σ (x<sub>i</sub>−x̄)(y<sub>i</sub>−ȳ)ᵀ = UΣVᵀ</b></li>
+        <li><b>R = V·diag(1,1,d)·Uᵀ</b>, con d = det(VUᵀ) per evitare riflessioni</li>
+        <li><b>t = ȳ − R x̄</b></li>
+      </ol>
+    </div>
+    <div>
+      <h2>Se le corrispondenze non sono note?</h2>
+      <p>Problema "uovo-gallina": per trovare le corrispondenze serve (R, t), per trovare (R, t) servono le corrispondenze.</p>
+      <ul class="small">
+        <li><b>ICP</b> alterna i due passi → sensibile all'inizializzazione, minimi locali.</li>
+        <li><b>Go-ICP</b> globalmente ottimo ma lentissimo.</li>
+        <li><b>Descrittori + RANSAC</b>: due stadi, non end-to-end.</li>
+        <li><b>DCP</b>: corrispondenze <i>apprese</i>, SVD differenziabile, end-to-end.</li>
+      </ul>
+    </div>
+  </div>
+  <div class="lesson"><b>Primo passo del lavoro:</b> studio della traccia, dell'articolo DCP e di Arun et al. (note in <code>Papers/notes.md</code> e <code>dcp-master.md</code>).</div>
+  <div class="footer"><span>Registrazione learning-based del phantom cervicale</span><span>3</span></div>
+</section>
+
+<!-- 4 SCELTA VARIANTE -->
+<section class="slide">
+  <div class="kicker">3 · Scelta del metodo</div>
+  <h1>Tre varianti proposte: perché V2 – Deep Closest Point</h1>
+  <div class="cols3">
+    <div class="card">
+      <h2>V1 · PointNetLK</h2>
+      <p>Correspondence-free: descrittore globale PointNet + Lucas–Kanade iterativo.</p>
+      <p class="muted">Robusto su sparse, sensibile a grandi disallineamenti.</p>
+    </div>
+    <div class="card hl">
+      <h2>V2 · Deep Closest Point ✔</h2>
+      <p>Embedding appresi + attenzione → <b>corrispondenze soft</b> → <b>SVD differenziabile</b>.</p>
+      <p>È lo <b>stesso Procrustes</b> della baseline: cambia solo che le corrispondenze sono apprese invece che imposte dall'ordine di tocco.</p>
+    </div>
+    <div class="card">
+      <h2>V3 · FCGF + RANSAC + ICP</h2>
+      <p>Descrittori 3D densi, matching + RANSAC, raffinamento ICP.</p>
+      <p class="muted">Forte su sweep, debole su sparse.</p>
+    </div>
+  </div>
+  <div class="note" style="margin-top:26px">Il confronto concettuale con il metodo esistente è il più diretto: <b>baseline = SVD su 4 corrispondenze esatte</b>, <b>DCP = SVD su corrispondenze apprese</b> da punti arbitrari.</div>
+  <div class="footer"><span>Registrazione learning-based del phantom cervicale</span><span>4</span></div>
+</section>
+
+<!-- 5 ARCHITETTURA -->
+<section class="slide">
+  <div class="kicker">4 · Architettura</div>
+  <h1>Come funziona DCP</h1>
+  <div class="pipe">
+    <div class="blk in"><b>Input</b><span>source parziale (Polaris)<br>target = digital twin</span></div>
+    <div class="arr">→</div>
+    <div class="blk"><b>DGCNN</b><span>grafo k-NN (k=20), feature locali, pesi condivisi, emb 512</span></div>
+    <div class="arr">→</div>
+    <div class="blk"><b>Transformer</b><span>self + cross attention: ogni cloud "guarda" l'altra</span></div>
+    <div class="arr">→</div>
+    <div class="blk"><b>Soft matching</b><span>softmax dei punteggi N<sub>s</sub>×N<sub>t</sub></span></div>
+    <div class="arr">→</div>
+    <div class="blk out"><b>SVD head</b><span>Procrustes differenziabile → R, t</span></div>
+  </div>
+  <div class="cols">
+    <div>
+      <div class="formula sm">S = F<sub>s</sub>ᵀ F<sub>t</sub> / √d, &nbsp; W = softmax<sub>t</sub>(S)</div>
+      <div class="formula sm">ŷ<sub>i</sub> = Σ<sub>j</sub> W<sub>ij</sub> y<sub>j</sub> &nbsp;(punto target "virtuale")</div>
+      <p class="small">La SVD viene applicata alle coppie (x<sub>i</sub>, ŷ<sub>i</sub>): funziona anche con <b>N<sub>s</sub> ≠ N<sub>t</sub></b>.</p>
+    </div>
+    <div>
+      <h2>Loss di posa</h2>
+      <div class="formula sm">L<sub>R</sub> = MSE(R<sub>pred</sub>ᵀ R<sub>gt</sub>, I) &nbsp;&nbsp; L<sub>t</sub> = MSE(t<sub>pred</sub>, t<sub>gt</sub>)</div>
+      <p class="small">Configurazione finale: DGCNN + Transformer (1 blocco, 4 teste, FF 1024) + SVD head, <b>5.57 M parametri</b>.</p>
+    </div>
+  </div>
+  <div class="footer"><span>Registrazione learning-based del phantom cervicale</span><span>5</span></div>
+</section>
+
+<!-- 6 DATI SINTETICI -->
+<section class="slide">
+  <div class="kicker">5 · Dati</div>
+  <h1>Dati sintetici dal digital twin: due modalità di acquisizione</h1>
+  <div class="fig" style="height:300px"><img src="figures/acquisition_modes.png" alt="Target, sweep e sparse"></div>
+  <div class="cols" style="margin-top:12px">
+    <div>
+      <h2>Generazione di ogni campione</h2>
+      <ol class="small">
+        <li>Campionamento uniforme sulla superficie (coordinate baricentriche).</li>
+        <li>Trasformazione rigida casuale: ±0.17 rad (≈9.7°) e ±10 mm per asse.</li>
+        <li>Rumore gaussiano del tracker σ = 0.3 mm.</li>
+        <li>Normalizzazione delle coordinate: scala comune 100 mm.</li>
+      </ol>
+    </div>
+    <div>
+      <h2>Le due modalità (asse sperimentale richiesto)</h2>
+      <ul class="small">
+        <li><b>Sweep</b>: patch connessa e densa (512 pt) costruita sul grafo di adiacenza delle facce, raggio 20–60 mm.</li>
+        <li><b>Sparse</b>: 20–50 punti sparsi, non ordinati.</li>
+        <li>Superficie usata: <code>Prototipo_Scocca Esterna.stl</code>.</li>
+      </ul>
+    </div>
+  </div>
+  <div class="footer"><span>Registrazione learning-based del phantom cervicale</span><span>6</span></div>
+</section>
+
+<!-- 7 ROADMAP -->
+<section class="slide">
+  <div class="kicker">6 · Percorso di sviluppo</div>
+  <h1>Le tappe che ci hanno portato alla versione finale</h1>
+  <div class="tl">
+    <div class="t"><div class="n">STEP 1</div><b>Adattamento DCP</b><span>PhantomDataset al posto di ModelNet40, mesh STL, frame e mm</span></div>
+    <div class="t"><div class="n">STEP 2</div><b>Prima versione</b><span>source e target uguali: errore bassissimo… ma ingannevole</span></div>
+    <div class="t"><div class="n">STEP 3</div><b>Punti non ordinati</b><span>permutazioni + metriche invarianti all'ordine</span></div>
+    <div class="t"><div class="n">STEP 4</div><b>Campionamenti indipendenti</b><span>niente più coordinate condivise tra source e target</span></div>
+    <div class="t"><div class="n">STEP 5</div><b>Partial-to-global</b><span>source parziale vs digital twin globale FPS da 1024 pt</span></div>
+  </div>
+  <div class="tl" style="margin-top:34px">
+    <div class="t"><div class="n">STEP 6</div><b>Stabilità</b><span>SVD per N<sub>s</sub>≠N<sub>t</sub>, GroupNorm, gradient clipping</span></div>
+    <div class="t"><div class="n">STEP 7</div><b>Baseline + TRE</b><span>4 landmark ufficiali, 5 target lungo il midollo</span></div>
+    <div class="t"><div class="n">STEP 8</div><b>Loss KL geometrica</b><span>supervisione diretta delle corrispondenze</span></div>
+    <div class="t"><div class="n">STEP 9</div><b>Riproducibilità</b><span>seed, checkpoint completi, 8 unit test</span></div>
+    <div class="t res"><div class="n">STEP 10</div><b>Ablation</b><span>peso λ della KL, raggio sweep, numero punti sparse</span></div>
+  </div>
+  <div class="lesson">Filo conduttore: <b>ogni volta che il risultato sembrava "troppo buono", il protocollo era troppo facile.</b> Abbiamo reso il problema progressivamente più realistico.</div>
+  <div class="footer"><span>Registrazione learning-based del phantom cervicale</span><span>7</span></div>
+</section>
+
+<!-- 8 STEP 1 -->
+<section class="slide">
+  <div class="kicker">Step 1</div>
+  <h1>Adattare il codice DCP al phantom</h1>
+  <div class="cols">
+    <div>
+      <p>Il codice originale (<code>dcp-master/</code>) era pensato per ModelNet40. Nuova cartella <code>phantom_v2/</code> con <code>PhantomDataset</code>, che:</p>
+      <ul class="small">
+        <li>carica e valida la mesh STL con <code>trimesh</code> (facce degeneri rimosse, aree finite);</li>
+        <li>campiona uniformemente sulle facce;</li>
+        <li>costruisce il grafo di adiacenza delle facce per le patch sweep;</li>
+        <li>genera trasformazioni rigide note (e le loro inverse);</li>
+        <li>simula il source nel frame Polaris con rumore;</li>
+        <li>normalizza i mm in unità di rete.</li>
+      </ul>
+    </div>
+    <div>
+      <h2>Chiarimenti fatti in questa fase</h2>
+      <ul class="small">
+        <li>Direzione della trasformazione: <b>Polaris → phantom</b>.</li>
+        <li>Unità fisiche in <b>millimetri</b>.</li>
+        <li>DCP e baseline valutati sulla <b>stessa TRE</b>.</li>
+        <li>Sweep e sparse tenuti <b>separati</b>.</li>
+        <li>Niente baseline su 4 vertici casuali: si attendono le coordinate ufficiali.</li>
+      </ul>
+      <p class="small muted">Problema pratico risolto: percorso STL errato → file reali in <code>ModelloPhantom/</code>, script <code>unify.py</code> per unire le mesh.</p>
+    </div>
+  </div>
+  <div class="footer"><span>Registrazione learning-based del phantom cervicale</span><span>8</span></div>
+</section>
+
+<!-- 9 STEP 2-4 -->
+<section class="slide">
+  <div class="kicker">Step 2 · 3 · 4</div>
+  <h1>Rendere il problema onesto</h1>
+  <div class="cols3">
+    <div class="card">
+      <h2><span class="step">2</span>Corrispondenze implicite</h2>
+      <p>Source e target contenevano <b>gli stessi punti, nello stesso ordine</b>.</p>
+      <p>Overfitting: <b>0.20°</b> e <b>0.39 mm</b>.</p>
+      <p class="muted">La rete poteva sfruttare una corrispondenza 1-a-1 nascosta: non è il problema reale.</p>
+    </div>
+    <div class="card">
+      <h2><span class="step">3</span>Permutazioni</h2>
+      <p>Source e target permutati in modo indipendente.</p>
+      <p>Le metriche MSE/MAE confrontavano <code>transformed_src</code> con <code>target</code> punto a punto → <b>valide solo se ordinati</b>.</p>
+      <p>Nuova metrica: posa predetta vs GT applicate agli <b>stessi punti</b>.</p>
+    </div>
+    <div class="card">
+      <h2><span class="step">4</span>Campionamenti indipendenti</h2>
+      <p>Source e target campionati separatamente sulla stessa regione.</p>
+      <p>Overfitting: <b>0.35°</b> e <b>0.69 mm</b>.</p>
+      <p class="muted">L'architettura è addestrabile, ma il problema è ancora locale-locale.</p>
+    </div>
+  </div>
+  <div class="formula sm" style="margin-top:18px">MSE<sub>AB</sub> = 1/(3N<sub>s</sub>) Σ<sub>i</sub> ‖ (R<sub>pred</sub>x<sub>i</sub> + t<sub>pred</sub>) − (R<sub>gt</sub>x<sub>i</sub> + t<sub>gt</sub>) ‖²</div>
+  <div class="lesson"><b>Lezione:</b> un errore basso non dimostra che il protocollo sia corretto. Il dataset non deve "regalare" alla rete l'informazione che dovrebbe imparare.</div>
+  <div class="footer"><span>Registrazione learning-based del phantom cervicale</span><span>9</span></div>
+</section>
+
+<!-- 10 STEP 5 -->
+<section class="slide">
+  <div class="kicker">Step 5</div>
+  <h1>Il passaggio decisivo: partial-to-global</h1>
+  <div class="cols">
+    <div>
+      <ul>
+        <li><b>Source</b>: acquisizione parziale (512 pt sweep oppure 20–50 pt sparse), frame Polaris, con rumore.</li>
+        <li><b>Target</b>: discretizzazione <b>globale</b> del digital twin, 1024 punti, frame phantom.</li>
+        <li>Target creato <b>una sola volta</b> con Farthest Point Sampling da un insieme più ampio di candidati, con seed dedicato.</li>
+        <li>Salvato nel <b>checkpoint</b>: training, validation e test usano esattamente lo stesso digital twin.</li>
+      </ul>
+    </div>
+    <div>
+      <div class="card" style="margin-bottom:16px">
+        <h2>Effetto immediato</h2>
+        <p>Primi smoke test con errori anche <b>&gt; 100 mm</b>.</p>
+        <p class="muted">Non era un peggioramento del modello: era il passaggio dal problema artificiale al problema reale, con overlap parziale e molte ambiguità.</p>
+      </div>
+      <div class="note">Da qui in poi tutti i numeri si riferiscono al problema <b>realistico</b>.</div>
+    </div>
+  </div>
+  <div class="footer"><span>Registrazione learning-based del phantom cervicale</span><span>10</span></div>
+</section>
+
+<!-- 11 STEP 6 -->
+<section class="slide">
+  <div class="kicker">Step 6</div>
+  <h1>Modifiche all'architettura per la stabilità</h1>
+  <div class="cols3">
+    <div class="card">
+      <h2>SVD head N<sub>s</sub> × N<sub>t</sub></h2>
+      <p>La testa originale assumeva cardinalità compatibili. Riscritta per produrre una matrice di punteggi N<sub>s</sub>×N<sub>t</sub> e un target virtuale per ogni punto source.</p>
+      <p>Correzione esplicita delle riflessioni: <b>det(R) = +1</b>.</p>
+      <p class="muted">Ora 25 punti si registrano contro 1024.</p>
+    </div>
+    <div class="card">
+      <h2>BatchNorm → GroupNorm</h2>
+      <p>Con batch molto piccoli (batch size 2) la BatchNorm creava un forte gap train/validation.</p>
+      <p>In DGCNN si usa GroupNorm (fino a 8 gruppi): non dipende dalle statistiche del batch.</p>
+    </div>
+    <div class="card">
+      <h2>Unità e training</h2>
+      <p>Normalizzazione unica (100 mm) e conversione esplicita in mm solo in evaluation → niente errori di fattore 100/1000.</p>
+      <p>Gradient clipping (norma 1) e controlli sui valori non finiti.</p>
+    </div>
+  </div>
+  <div class="footer"><span>Registrazione learning-based del phantom cervicale</span><span>11</span></div>
+</section>
+
+<!-- 12 STEP 7 -->
+<section class="slide">
+  <div class="kicker">Step 7</div>
+  <h1>Baseline ufficiale e Target Registration Error</h1>
+  <div class="cols wide-right">
+    <div>
+      <h2>Baseline a 4 landmark</h2>
+      <p class="small">Coordinate ufficiali fornite dai docenti (frame phantom, mm):</p>
+      <p class="small"><code>(2.5, −65, 82.5)</code> <code>(50, −65, 77.5)</code><br><code>(50, 25, 50)</code> <code>(42.5, 102.5, 27.5)</code></p>
+      <p class="small">Per ogni campione: landmark portati nel frame Polaris con la GT inversa, <b>stesso rumore</b> del tracker, posa stimata con SVD classica.</p>
+      <p class="small">DCP e baseline valutati sugli <b>stessi campioni</b> e sugli <b>stessi target</b>.</p>
+    </div>
+    <div>
+      <h2>TRE: la metrica primaria</h2>
+      <p class="small">5 target lungo la regione cervicale centrale, vicino al <b>midollo</b> (la struttura da non danneggiare).</p>
+      <div class="formula sm">e<sub>k</sub> = ‖ R<sub>pred</sub> R<sub>gt</sub>ᵀ (p<sub>k</sub> − t<sub>gt</sub>) + t<sub>pred</sub> − p<sub>k</sub> ‖</div>
+      <p class="small">Metriche secondarie: errore di rotazione (°), di traslazione (mm), source proxy (diagnostico). Per ognuna: media, std, mediana, p95, max.</p>
+      <p class="small muted">Correttezza verificata con casi noti: SVD senza rumore, TRE nullo, traslazione di 1 mm, rotazione di 90°.</p>
+    </div>
+  </div>
+  <div class="footer"><span>Registrazione learning-based del phantom cervicale</span><span>12</span></div>
+</section>
+
+<!-- 13 STEP 8 -->
+<section class="slide">
+  <div class="kicker">Step 8</div>
+  <h1>Supervisione geometrica delle corrispondenze</h1>
+  <div class="cols">
+    <div>
+      <p>La sola pose loss supervisiona l'uscita finale ma <b>non obbliga l'attenzione</b> a rappresentare corrispondenze geometricamente sensate.</p>
+      <p>Etichette soft dalla ground truth:</p>
+      <div class="formula sm">q<sub>ij</sub> = softmax<sub>j</sub>( −‖R<sub>gt</sub>x<sub>i</sub> + t<sub>gt</sub> − y<sub>j</sub>‖² / 2σ² ), &nbsp;σ = 5 mm</div>
+      <div class="formula sm">L<sub>corr</sub> = D<sub>KL</sub>( q ‖ p ), &nbsp; p<sub>ij</sub> = softmax<sub>j</sub>(S<sub>ij</sub>)</div>
+    </div>
+    <div>
+      <div class="formula">L<sub>tot</sub> = L<sub>pose</sub> + 0.1·L<sub>cycle</sub> + λ<sub>corr</sub>·L<sub>corr</sub></div>
+      <ul class="small">
+        <li>La GT serve <b>solo a costruire la loss</b>, mai come input della rete.</li>
+        <li>Non serve che source e target contengano gli stessi punti.</li>
+        <li>Il miglior checkpoint è scelto sulla <b>pose validation loss</b> (senza KL), per non premiare buone corrispondenze con una posa peggiore.</li>
+        <li>Implementata in <code>correspondence_loss.py</code>; logits esposti da <code>return_correspondence</code>.</li>
+      </ul>
+    </div>
+  </div>
+  <div class="footer"><span>Registrazione learning-based del phantom cervicale</span><span>13</span></div>
+</section>
+
+<!-- 14 STEP 9 + PROTOCOLLO -->
+<section class="slide">
+  <div class="kicker">Step 9</div>
+  <h1>Riproducibilità e protocollo sperimentale</h1>
+  <div class="cols">
+    <div>
+      <h2>Controlli aggiunti</h2>
+      <ul class="small">
+        <li>Seed deterministico per campione: <code>SeedSequence([seed, index])</code>, split separati.</li>
+        <li>Checkpoint con argomenti, optimizer, scheduler, epoca, digital twin e hash SHA-256 della mesh.</li>
+        <li><code>--resume</code> distinto da <code>--pretrained</code>; blocco sovrascrittura esperimenti; backup dei sorgenti.</li>
+        <li><b>8 unit test</b> (<code>test_correspondence.py</code>): forward/backward, scala, permutazioni, corrispondenze, checkpoint, dataset, SVD, TRE — tutti superati su Windows e Linux (GPU).</li>
+      </ul>
+    </div>
+    <div>
+      <table>
+        <tr><th>Parametro</th><th>Valore</th></tr>
+        <tr><td>Training / validation</td><td>5000 / 500 campioni</td></tr>
+        <tr><td>Development set</td><td>2000 campioni, seed 44</td></tr>
+        <tr><td>Epoche</td><td>50 (StepLR ×0.5 dopo 25)</td></tr>
+        <tr><td>Ottimizzatore</td><td>Adam, lr 10⁻³, wd 10⁻⁴</td></tr>
+        <tr><td>Batch size</td><td>2</td></tr>
+        <tr><td>Rotazione / traslazione max</td><td>±9.7° / ±10 mm per asse</td></tr>
+        <tr><td>Rumore</td><td>σ = 0.3 mm</td></tr>
+        <tr><td>Target</td><td>1024 pt FPS</td></tr>
+      </table>
+    </div>
+  </div>
+  <div class="footer"><span>Registrazione learning-based del phantom cervicale</span><span>14</span></div>
+</section>
+
+<!-- 15 ABLATION LAMBDA -->
+<section class="slide">
+  <div class="kicker">Step 10 · Risultati</div>
+  <h1>Ablation 1: quanto pesare la loss geometrica?</h1>
+  <div class="fig" style="height:330px"><img src="figures/ablation_corr_weight.png" alt="TRE media al variare di lambda"></div>
+  <div class="cols" style="margin-top:14px">
+    <div class="small">
+      <p><b>Sweep:</b> λ = 0.03 è il compromesso migliore: TRE media −9% (14.0 → 12.8 mm), mediana −13.5%. Con λ = 0.10 migliora il proxy ma peggiorano p95 e massimo (90.5 mm).</p>
+    </div>
+    <div class="small">
+      <p><b>Sparse:</b> miglioramento netto e monotono fino a λ = 0.10: TRE media −33.7% (5.4 → 3.6 mm), mediana −37.4%, p95 −26%.</p>
+    </div>
+  </div>
+  <div class="footer"><span>Registrazione learning-based del phantom cervicale · development set seed 44, 2000 campioni</span><span>15</span></div>
+</section>
+
+<!-- 16 ABLATION ACQUISIZIONE -->
+<section class="slide">
+  <div class="kicker">Step 10 · Risultati</div>
+  <h1>Ablation 2: come acquisire i punti?</h1>
+  <div class="fig" style="height:330px"><img src="figures/ablation_acquisition.png" alt="TRE al variare di raggio sweep e numero di punti sparse"></div>
+  <div class="cols" style="margin-top:14px">
+    <div class="small">
+      <p><b>Sweep:</b> allargare la patch da 20 a 60 mm più che dimezza la TRE (12.8 → 6.1 mm con KL). La KL aiuta a ogni raggio.</p>
+    </div>
+    <div class="small">
+      <p><b>Sparse:</b> più punti → meno errore. Con 50 punti e KL: <b>TRE media 1.78 mm</b>, p95 3.48 mm.</p>
+    </div>
+  </div>
+  <div class="note small" style="font-size:16.5px"><b>Perché 25 punti sparsi battono 512 punti sweep?</b> Lo sweep è una singola patch locale, spesso liscia o quasi simmetrica: molti punti vicini aggiungono poca informazione globale. Pochi punti distanti vincolano meglio rotazione e traslazione.</div>
+  <div class="footer"><span>Registrazione learning-based del phantom cervicale · development set seed 44, 2000 campioni</span><span>16</span></div>
+</section>
+
+<!-- 17 CONFRONTO FINALE -->
+<section class="slide">
+  <div class="kicker">Risultati</div>
+  <h1>Confronto con la baseline a 4 landmark</h1>
+  <div class="cols wide-left">
+    <div class="fig"><img src="figures/final_comparison.png" alt="TRE delle configurazioni migliori vs baseline"></div>
+    <div>
+      <table>
+        <tr><th>Metodo</th><th class="num">Rot. [°]</th><th class="num">Trasl. [mm]</th><th class="num">TRE [mm]</th></tr>
+        <tr><td>Sweep r=60, DCP+KL</td><td class="num">4.31</td><td class="num">6.01</td><td class="num">6.06</td></tr>
+        <tr class="best"><td>Sparse n=50, DCP+KL</td><td class="num">1.64</td><td class="num">2.07</td><td class="num">1.78</td></tr>
+        <tr><td>Baseline 4 landmark</td><td class="num">0.43</td><td class="num">0.56</td><td class="num">0.40</td></tr>
+      </table>
+      <p class="small" style="margin-top:16px">La baseline resta <b>più accurata</b> (≈4× sulla TRE rispetto al miglior DCP), ma richiede identità e ordine dei 4 punti.</p>
+      <p class="small">DCP lavora con punti <b>arbitrari e non ordinati</b>: un problema intrinsecamente più difficile.</p>
+    </div>
+  </div>
+  <div class="footer"><span>Registrazione learning-based del phantom cervicale · development set seed 44, 2000 campioni</span><span>17</span></div>
+</section>
+
+<!-- 18 PROBLEMI -->
+<section class="slide">
+  <div class="kicker">Riepilogo</div>
+  <h1>Problemi incontrati e soluzioni</h1>
+  <table style="font-size:15.5px">
+    <tr><th style="width:27%">Problema</th><th style="width:38%">Soluzione</th><th>Conseguenza</th></tr>
+    <tr><td>Source e target identici</td><td>Permutazioni, campionamenti indipendenti, target globale FPS</td><td>Niente corrispondenze implicite; problema realistico</td></tr>
+    <tr><td>Metriche punto a punto</td><td>Posa predetta e GT applicate agli stessi punti</td><td>MSE/MAE invarianti all'ordine</td></tr>
+    <tr><td>Cardinalità diverse</td><td>Attenzione N<sub>s</sub>×N<sub>t</sub> e target virtuali</td><td>25 / 512 punti contro 1024</td></tr>
+    <tr><td>Gap train/eval, batch piccoli</td><td>BatchNorm → GroupNorm</td><td>Checkpoint più affidabili</td></tr>
+    <tr><td>Digital twin ricampionato</td><td>Target FPS fisso salvato nel checkpoint</td><td>Riproducibilità train/val/test</td></tr>
+    <tr><td>Unità mm vs rete</td><td>Scala unica + conversione esplicita</td><td>Errori fisici interpretabili</td></tr>
+    <tr><td>Baseline con vertici casuali</td><td>Landmark ufficiali + SVD dei docenti</td><td>Confronto difendibile</td></tr>
+    <tr><td>Attenzione non supervisionata</td><td>KL geometrica con etichette soft</td><td>Forte miglioramento, soprattutto sparse</td></tr>
+    <tr><td>Esperimenti sovrascrivibili</td><td>Blocco cartelle, backup sorgenti, best/last</td><td>Tracciabilità</td></tr>
+  </table>
+  <div class="footer"><span>Registrazione learning-based del phantom cervicale</span><span>18</span></div>
+</section>
+
+<!-- 19 CONCLUSIONI -->
+<section class="slide">
+  <div class="kicker">Conclusioni</div>
+  <h1>Cosa abbiamo imparato</h1>
+  <div class="cols">
+    <div>
+      <ol>
+        <li>Pipeline completa e verificata per la registrazione <b>partial-to-global</b>, non ordinata, del phantom cervicale.</li>
+        <li>La <b>supervisione geometrica</b> delle corrispondenze aiuta sempre, soprattutto in modalità sparse.</li>
+        <li>Pochi punti <b>distribuiti globalmente</b> sono più informativi di uno sweep locale denso.</li>
+        <li>La baseline a 4 landmark resta più accurata, ma paga con <b>corrispondenze e ordine prescritti</b>.</li>
+      </ol>
+    </div>
+    <div>
+      <div class="card" style="text-align:center; margin-bottom:16px">
+        <div class="big o">1.78 mm</div><div class="stat">TRE media migliore (sparse, 50 punti, DCP + KL)</div>
+      </div>
+      <div class="card" style="text-align:center">
+        <div class="big g">0.40 mm</div><div class="stat">TRE media baseline 4 landmark</div>
+      </div>
+    </div>
+  </div>
+  <div class="note">La domanda giusta non è "DCP batte la baseline?", ma <b>quanto errore siamo disposti ad accettare per eliminare la procedura vincolata</b>, e con quale modalità di acquisizione il compromesso è più favorevole.</div>
+  <div class="footer"><span>Registrazione learning-based del phantom cervicale</span><span>19</span></div>
+</section>
+
+<!-- 20 LAVORI FUTURI -->
+<section class="slide">
+  <div class="kicker">Prossimi passi</div>
+  <h1>Validazione ancora da completare</h1>
+  <div class="cols3">
+    <div class="card"><h2>Multi-seed</h2><p>Ripetere le 4 configurazioni principali con ≥ 3 seed di training (es. 42, 123, 777): media e deviazione tra seed.</p></div>
+    <div class="card"><h2>Test held-out</h2><p>Seed 314159 riservato alla sola valutazione finale, mai usato nelle scelte progettuali.</p></div>
+    <div class="card"><h2>Bacino di convergenza</h2><p>Aumentare rotazioni e traslazioni iniziali, success rate con soglia TRE fissata a priori (es. &lt; 5 mm).</p></div>
+    <div class="card"><h2>Robustezza al rumore</h2><p>σ = 0, 0.3, 0.6 mm: separare l'ambiguità geometrica dall'errore del tracker.</p></div>
+    <div class="card"><h2>Reality check Polaris</h2><p>Piccolo set di acquisizioni reali sul phantom fisico: calibrazione, contatto, occlusioni, campionamento manuale.</p></div>
+    <div class="card"><h2>Superficie acquisibile</h2><p>Confermare con la docente quale superficie (anatomia interna esposta o scocca esterna) usare nella versione finale.</p></div>
+  </div>
+  <div class="footer"><span>Registrazione learning-based del phantom cervicale</span><span>20</span></div>
+</section>
+
+<!-- 21 GRAZIE -->
+<section class="slide title">
+  <div class="bar"></div>
+  <h1>Grazie per l'attenzione</h1>
+  <div class="sub">Domande?</div>
+  <div class="meta small" style="font-size:15px; line-height:1.55">
+    [1] K. S. Arun, T. S. Huang, S. D. Blostein, "Least-Squares Fitting of Two 3-D Point Sets", IEEE TPAMI, 1987.<br>
+    [2] Y. Wang, J. M. Solomon, "Deep Closest Point: Learning Representations for Point Cloud Registration", ICCV 2019.<br>
+    [3] P. J. Besl, N. D. McKay, "A Method for Registration of 3-D Shapes", IEEE TPAMI, 1992.<br>
+    [4] Y. Wang et al., "Dynamic Graph CNN for Learning on Point Clouds", ACM TOG, 2019.<br>
+    [5] A. Vaswani et al., "Attention Is All You Need", NeurIPS 2017.
+  </div>
+</section>
+
+</body>
+</html>
