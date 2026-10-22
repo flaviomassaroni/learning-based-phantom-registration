@@ -1,0 +1,7 @@
+
+======================================================
+TRAINING: multiseed_sweep_r60_corr003_seed123
+mode=sweep, points=512, radius=60
+corr_weight=0.03, seed=123
+======================================================
+/home/flavio/.pyenv/versions/MR/bin/python: can't open file '/home/flavio/Documents/University/1st Year/2 Semester/Medical/FinalProject/train.py': [Errno 2] No such file or directory
