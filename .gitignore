@@ -7,4 +7,5 @@ data/
 .env
 phantom_v2/phantom.stl
 phantom_v2/phantom_surface.stl
+ModelloPhantom
 MJC12N_registration.DS_Store
